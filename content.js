@@ -373,7 +373,11 @@
         updateLiveDisplay(current);
       } catch (error) {
         if (current !== session || current.stopFlag) return;
-        setProbe("Background render retrying", error?.message || String(error));
+        const message = error?.message || String(error);
+        stopSession("Dub render failed", false, false);
+        setProbe("Dub render failed", message);
+        emitState({ running: false, status: "Dub render failed", errorMessage: message });
+        return;
       }
     }
   }
@@ -583,7 +587,7 @@
     return { ok: true, status: "Translating", count: sentences.length };
   }
 
-  function stopSession(reason, remove) {
+  function stopSession(reason, remove, notify) {
     const stopReason = reason || "Stopped";
     const shouldRemove = remove !== false;
     const current = session;
@@ -615,7 +619,7 @@
     }
     session = null;
     if (shouldRemove) removeProbe();
-    if (stopReason !== "restart") {
+    if (stopReason !== "restart" && notify !== false) {
       emitState({ running: false, status: stopReason, errorMessage: "" });
     }
   }

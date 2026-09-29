@@ -4,7 +4,8 @@ importScripts(
   "lib/translation-core.js",
   "lib/providers/gemini.js",
   "lib/tts-core.js",
-  "lib/providers/novai.js"
+  "lib/providers/novai.js",
+  "lib/providers/runtime.js"
 );
 
 const ytCaptionCache = new Map();
@@ -59,24 +60,7 @@ function publicRuntimeSettings(config) {
 async function translateWithConfiguredProvider(message, signal) {
   const config = await loadRuntimeConfig();
   const translation = config.translation || {};
-  const providerName = translation.provider || "gemini";
-  if (providerName !== "gemini") {
-    throw new Error("Unsupported translation provider: " + providerName);
-  }
-
-  const models = Array.isArray(translation.models) ? translation.models.filter(Boolean) : [];
-  if (!models.length) throw new Error("No Gemini model configured.");
-
-  const registry = new SubToVoiceTranslationCore.TranslationProviderRegistry();
-  registry.register(providerName, SubToVoiceGeminiTranslationProvider.createGeminiProvider({
-    apiKey: translation.apiKey,
-    baseUrl: translation.baseUrl,
-    model: models[0]
-  }));
-  const manager = new SubToVoiceTranslationCore.TranslationManager({
-    registry,
-    providerName
-  });
+  const manager = SubToVoiceProviderRuntime.createTranslationManager(translation);
   return manager.translateBatch({
     lines: message.lines,
     sourceLanguage: message.sourceLanguage || translation.sourceLanguage || "auto",
@@ -88,22 +72,7 @@ async function translateWithConfiguredProvider(message, signal) {
 async function synthesizeWithConfiguredProvider(message, signal) {
   const config = await loadRuntimeConfig();
   const tts = config.tts || {};
-  const providerName = tts.provider || "novai";
-  if (providerName !== "novai") {
-    throw new Error("Unsupported TTS provider: " + providerName);
-  }
-
-  const registry = new SubToVoiceTTSCore.TTSProviderRegistry();
-  registry.register(providerName, SubToVoiceNovAI.createNovAIProvider({
-    apiKey: tts.apiKey,
-    baseUrl: tts.baseUrl,
-    model: tts.model,
-    voice: tts.voice
-  }));
-  const manager = new SubToVoiceTTSCore.TTSManager({
-    registry,
-    provider: providerName
-  });
+  const manager = SubToVoiceProviderRuntime.createTTSManager(tts);
   return manager.synthesize({
     text: message.text,
     voice: message.voice || tts.voice,
