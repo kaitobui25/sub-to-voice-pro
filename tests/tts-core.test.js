@@ -3,7 +3,14 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { TTSManager, TTSProviderRegistry } = require("../lib/tts-core.js");
-const { createGeminiTTSProvider } = require("../lib/providers/gemini-tts.js");
+const {
+  createGeminiTTSProvider,
+  _resetCooldownsForTests
+} = require("../lib/providers/gemini-tts.js");
+
+test.beforeEach(() => {
+  _resetCooldownsForTests();
+});
 
 function makeWavBuffer() {
   const bytes = new Uint8Array(44);
@@ -159,6 +166,98 @@ test("Gemini TTS adapter falls back to the next configured model only on 429", a
   assert.deepEqual(modelsSeen, ["lite-model", "flash-model"]);
   assert.equal(result.model, "flash-model");
   assert.equal(result.audio.byteLength, 44);
+});
+
+test("Gemini TTS adapter remembers 429 cooldown and skips the limited model on the next request", async () => {
+  const modelsSeen = [];
+  const wav = new Uint8Array(makeWavBuffer());
+  const options = {
+    apiKey: "test-key",
+    baseUrl: "https://cooldown.test/v1beta",
+    models: ["lite-model", "flash-model"],
+    voice: "Kore",
+    fetchImpl: async (_url, requestOptions) => {
+      const model = JSON.parse(requestOptions.body).model;
+      modelsSeen.push(model);
+      if (model === "lite-model") {
+        return {
+          ok: false,
+          status: 429,
+          headers: { get: () => null },
+          async text() {
+            return JSON.stringify({
+              error: { message: "Rate limit exceeded. Please retry in 28s." }
+            });
+          }
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            steps: [{
+              content: [{
+                type: "audio",
+                data: Buffer.from(wav).toString("base64"),
+                mime_type: "audio/wav"
+              }]
+            }]
+          };
+        }
+      };
+    }
+  };
+
+  const firstProvider = createGeminiTTSProvider(options);
+  const firstResult = await firstProvider.synthesize({ text: "Một", speed: 1 });
+  assert.equal(firstResult.model, "flash-model");
+  assert.deepEqual(modelsSeen, ["lite-model", "flash-model"]);
+
+  const secondProvider = createGeminiTTSProvider(options);
+  const secondResult = await secondProvider.synthesize({ text: "Hai", speed: 1 });
+  assert.equal(secondResult.model, "flash-model");
+  assert.deepEqual(modelsSeen, ["lite-model", "flash-model", "flash-model"]);
+});
+
+test("Gemini TTS adapter makes no request while all configured models are cooling down", async () => {
+  const calls = [];
+  const provider = createGeminiTTSProvider({
+    apiKey: "test-key",
+    baseUrl: "https://all-limited.test/v1beta",
+    models: ["lite-model", "flash-model"],
+    voice: "Kore",
+    fetchImpl: async (_url, options) => {
+      calls.push(JSON.parse(options.body).model);
+      return {
+        ok: false,
+        status: 429,
+        headers: { get: () => "30" },
+        async text() {
+          return JSON.stringify({ error: { message: "rate limited" } });
+        }
+      };
+    }
+  });
+
+  await assert.rejects(provider.synthesize({ text: "Một", speed: 1 }), /429/);
+  assert.deepEqual(calls, ["lite-model", "flash-model"]);
+
+  const secondProvider = createGeminiTTSProvider({
+    apiKey: "test-key",
+    baseUrl: "https://all-limited.test/v1beta",
+    models: ["lite-model", "flash-model"],
+    voice: "Kore",
+    fetchImpl: async () => {
+      calls.push("unexpected");
+      throw new Error("must not call while cooling down");
+    }
+  });
+  await assert.rejects(
+    secondProvider.synthesize({ text: "Hai", speed: 1 }),
+    /rate-limited.*30s/i
+  );
+  assert.deepEqual(calls, ["lite-model", "flash-model"]);
 });
 
 test("Gemini TTS adapter does not fall back on non-429 provider errors", async () => {

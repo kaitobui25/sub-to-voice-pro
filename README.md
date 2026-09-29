@@ -15,6 +15,7 @@ The MVP follows the locked Echoly baseline in docs/ECHOLY_BASELINE.md:
 
 Translation and TTS are provider-neutral at the core boundary. The current adapters both use Gemini APIs; the TTS model is selected in config.yaml rather than hard-coded in runtime code.
 TTS models are tried in config order; the adapter falls back to the next configured TTS model only when the current model returns HTTP 429.
+After a 429, the adapter remembers that model's cooldown from Retry-After (or the provider error message) and skips it until the cooldown expires, preventing repeated rate-limit calls.
 
 ## Local development
 
