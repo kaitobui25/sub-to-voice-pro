@@ -1,21 +1,59 @@
 # Sub-to-Voice Pro
 
-Current MVP: Chrome Manifest V3 subtitle-first dubbing for normal YouTube VOD videos that already have captions.
+Chrome Manifest V3 subtitle-first dubbing for normal, non-live YouTube VODs that already have captions.
 
-The implementation follows the locked Echoly subtitle-first baseline recorded in docs/ECHOLY_BASELINE.md. Production settings UI, Realtime/WebRTC, no-caption audio fallback, live streams, streaming TTS, and playback-rate scheduling are deferred.
+The MVP follows the locked Echoly baseline in docs/ECHOLY_BASELINE.md:
 
-## Development
+- YouTube captions -> JSON3 -> sentence regroup/dedupe
+- translation batches of at most 10 lines
+- first wave of 2 forward sentences
+- complete-file TTS with 5 concurrent render workers
+- decodeAudioData() -> AudioBuffer
+- Web Audio scheduling at original subtitle timestamps
+- 30-second rolling lookahead
+- seek/pause/resume/Stop cleanup with one active session
 
-1. Copy .env.example to .env and fill local provider keys.
-2. Run the development runtime-config generator once provider phases are enabled.
-3. Open chrome://extensions, enable Developer mode, choose Load unpacked, and select this folder.
-4. Open a normal captioned YouTube VOD.
-5. Click the extension action to Start/Stop.
+Translation and TTS are provider-neutral at the core boundary. The current development adapters are Gemini for translation and NovAI MiniMax speech for TTS.
 
-Phase 1 only verifies real caption acquisition and sentence regrouping. The small on-page panel is a temporary debug control, not the production UI.
+## Local development
+
+1. Copy .env.example to .env.
+2. Add GEMINI_API_KEY and NOVAI_API_KEY locally.
+3. Generate the gitignored runtime bridge:
+
+       npm run config
+
+4. Open chrome://extensions.
+5. Enable Developer mode, choose Load unpacked, and select this folder.
+6. Open a normal captioned YouTube VOD at 1x speed.
+7. Click the extension action to Start or Stop.
+
+runtime-config.local.json contains local development credentials. It is generated from .env, is gitignored, and must not be committed or shared.
+
+The small panel injected on YouTube is a development status surface only. Production settings UI is deferred.
 
 ## Checks
 
-Run npm test and npm run check.
+Run deterministic checks without provider calls:
 
-Secrets in .env and generated local runtime config are gitignored.
+    npm test
+    npm run check
+
+Generate local config:
+
+    npm run config
+
+Tiny real-provider smoke tests consume provider quota or credits:
+
+    npm run smoke:gemini
+    npm run smoke:novai
+
+The Gemini smoke translates exactly two short lines. The NovAI smoke synthesizes one short Vietnamese sentence and verifies non-empty audio plus MP3/WAV signature.
+
+## Current scope
+
+Included: normal captioned YouTube VOD, Gemini translation adapter, NovAI MiniMax TTS adapter, complete audio-file decoding, timestamp scheduler, rolling lookahead, pause/resume/seek/Stop lifecycle.
+
+Deferred: production UI, Realtime/WebRTC, no-caption audio capture fallback, live streams, non-YouTube sources, streaming TTS, AudioWorklet, playback-rate scheduling, backend/proxy.
+
+Third-party attribution is in THIRD_PARTY_NOTICES.md. Current gate results and remaining browser checks are in docs/VALIDATION.md.

@@ -2,9 +2,7 @@
 
 importScripts(
   "lib/translation-core.js",
-  "lib/providers/gemini.js",
   "lib/tts-core.js",
-  "lib/providers/novai.js",
   "lib/providers/runtime.js"
 );
 
