@@ -233,6 +233,81 @@ test("Gemini adapter falls back to the next configured translation model on 429"
   assert.deepEqual(modelsSeen, ["primary-model", "fallback-model"]);
 });
 
+test("Gemini adapter falls back to the next configured translation model on 503", async () => {
+  const modelsSeen = [];
+  const provider = createGeminiProvider({
+    baseUrl: "https://service-unavailable.test/v1beta",
+    apiKey: "test-secret",
+    models: ["model-a", "model-b"],
+    fetchImpl: async (url) => {
+      const model = decodeURIComponent(url.match(/\/models\/([^:]+):generateContent$/)[1]);
+      modelsSeen.push(model);
+      if (model === "model-a") {
+        return {
+          ok: false,
+          status: 503,
+          headers: { get: () => null },
+          async text() {
+            return JSON.stringify({
+              error: { message: "The service is currently unavailable." }
+            });
+          }
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            candidates: [{ content: { parts: [{ text: '{"lines":["ok"]}' }] } }]
+          };
+        }
+      };
+    }
+  });
+
+  assert.deepEqual(await provider.translateBatch({ prompt: "PROMPT" }), ["ok"]);
+  assert.deepEqual(modelsSeen, ["model-a", "model-b"]);
+});
+
+test("Gemini adapter remembers 503 cooldown across provider instances", async () => {
+  const modelsSeen = [];
+  const options = {
+    baseUrl: "https://service-cooldown.test/v1beta",
+    apiKey: "test-secret",
+    models: ["model-a", "model-b"],
+    fetchImpl: async (url) => {
+      const model = decodeURIComponent(url.match(/\/models\/([^:]+):generateContent$/)[1]);
+      modelsSeen.push(model);
+      if (model === "model-a") {
+        return {
+          ok: false,
+          status: 503,
+          headers: { get: () => null },
+          async text() { return "temporarily unavailable"; }
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            candidates: [{ content: { parts: [{ text: '{"lines":["ok"]}' }] } }]
+          };
+        }
+      };
+    }
+  };
+
+  const first = createGeminiProvider(options);
+  assert.deepEqual(await first.translateBatch({ prompt: "ONE" }), ["ok"]);
+  assert.deepEqual(modelsSeen, ["model-a", "model-b"]);
+
+  const second = createGeminiProvider(options);
+  assert.deepEqual(await second.translateBatch({ prompt: "TWO" }), ["ok"]);
+  assert.deepEqual(modelsSeen, ["model-a", "model-b", "model-b"]);
+});
+
 test("Gemini adapter remembers translation model cooldown across provider instances", async () => {
   const modelsSeen = [];
   const options = {
@@ -303,7 +378,7 @@ test("Gemini adapter makes no translation request while all configured models ar
   assert.equal(calls.length, 2);
 });
 
-test("Gemini adapter does not switch translation models on non-429 errors", async () => {
+test("Gemini adapter does not switch translation models on non-transient client errors", async () => {
   const modelsSeen = [];
   const provider = createGeminiProvider({
     baseUrl: "https://example.test/v1beta",
