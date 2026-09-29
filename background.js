@@ -15,10 +15,12 @@ let runtimeConfigPromise = null;
 
 let state = {
   running: false,
+  starting: false,
   tabId: null,
   status: "Ready",
   errorMessage: ""
 };
+let stateGeneration = 0;
 
 function snapshot() {
   return { ...state };
@@ -136,7 +138,7 @@ async function setActionState(status, failed) {
   await chrome.action.setBadgeText({ text: badgeText }).catch(() => {});
   const title = failed
     ? "Sub-to-Voice: " + (state.errorMessage || "Error")
-    : state.running
+    : (state.running || state.starting)
       ? "Stop Sub-to-Voice"
       : "Start Sub-to-Voice";
   await chrome.action.setTitle({ title }).catch(() => {});
@@ -205,9 +207,11 @@ async function ensureContentScript(tabId) {
 }
 
 async function stopActiveSession(reason) {
+  stateGeneration += 1;
   const tabId = state.tabId;
   state = {
     running: false,
+    starting: false,
     tabId: null,
     status: reason || "Stopped",
     errorMessage: ""
@@ -223,12 +227,14 @@ async function startInTab(tab) {
     throw new Error("Open a normal YouTube video first.");
   }
 
-  if (state.running && state.tabId && state.tabId !== tab.id) {
+  if ((state.running || state.starting) && state.tabId && state.tabId !== tab.id) {
     await stopActiveSession("Switched tab");
   }
 
+  const generation = ++stateGeneration;
   state = {
     running: false,
+    starting: true,
     tabId: tab.id,
     status: "Loading captions",
     errorMessage: ""
@@ -237,11 +243,15 @@ async function startInTab(tab) {
   await ensureContentScript(tab.id);
 
   const reply = await chrome.tabs.sendMessage(tab.id, { type: "CONTENT_START" });
+  if (generation !== stateGeneration) {
+    return { ok: false, cancelled: true };
+  }
   if (!reply?.ok) {
     throw new Error(reply?.error || "Could not start caption session.");
   }
 
   state.running = true;
+  state.starting = false;
   state.status = reply.status || "Captions ready";
   await setActionState("running", false);
   return reply;
@@ -249,13 +259,15 @@ async function startInTab(tab) {
 
 chrome.action.onClicked.addListener(async (tab) => {
   try {
-    if (state.running && state.tabId === tab.id) {
+    if ((state.running || state.starting) && state.tabId === tab.id) {
       await stopActiveSession();
       return;
     }
-    await startInTab(tab);
+    const reply = await startInTab(tab);
+    if (reply?.cancelled) return;
   } catch (error) {
     state.running = false;
+    state.starting = false;
     state.status = "Error";
     state.errorMessage = error?.message || String(error);
     await setActionState("idle", true);
@@ -272,6 +284,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.tab && message?.type === "CONTENT_STATE") {
     if (sender.tab.id === state.tabId) {
       state.running = Boolean(message.running);
+      state.starting = false;
       state.status = message.status || state.status;
       state.errorMessage = message.errorMessage || "";
       void setActionState(state.running ? "running" : "idle", Boolean(state.errorMessage));

@@ -342,6 +342,10 @@
     while (current === session && !current.stopFlag) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       if (current !== session || current.stopFlag) return;
+      if (current.paused) {
+        updateLiveDisplay(current);
+        continue;
+      }
 
       const videoTime = current.video.currentTime;
       const horizon = videoTime + (AudioScheduler.LOOKAHEAD_MS / 1000);
@@ -433,10 +437,15 @@
       audioOffset: 0,
       renderCursor: 0,
       stopFlag: false,
+      paused: false,
+      startupPreparing: true,
       source: null,
       wasPlaying: !video.paused,
       originalVolume: video.volume,
       originalMuted: video.muted,
+      _onPause: null,
+      _onPlay: null,
+      _onSeeked: null,
       _onEnded: null
     };
     session = current;
@@ -518,15 +527,56 @@
     current.renderCursor = firstWave.end;
     applyVolumes(current);
 
+    const onPause = () => {
+      if (current !== session || current.stopFlag) return;
+      current.paused = true;
+      AudioScheduler.cancelPendingSources(current);
+      void current.audioCtx.suspend().catch(() => {});
+      setProbe("Paused");
+      emitState({ running: true, paused: true, status: "Paused", errorMessage: "" });
+    };
+    const onPlay = async () => {
+      if (current !== session || current.stopFlag) return;
+      current.paused = false;
+      AudioScheduler.cancelPendingSources(current);
+      await current.audioCtx.resume().catch(() => {});
+      if (current !== session || current.stopFlag) return;
+      current.audioOffset = AudioScheduler.computeAudioOffset(
+        current.audioCtx.currentTime,
+        current.video.currentTime
+      );
+      const window = AudioScheduler.scheduleAroundPlayhead(current, current.video);
+      if (window.start < current.renderCursor) current.renderCursor = window.start;
+      updateLiveDisplay(current);
+      emitState({ running: true, paused: false, status: "Translating", errorMessage: "" });
+    };
+    const onSeeked = () => {
+      if (current !== session || current.stopFlag) return;
+      AudioScheduler.cancelPendingSources(current);
+      current.audioOffset = AudioScheduler.computeAudioOffset(
+        current.audioCtx.currentTime,
+        current.video.currentTime
+      );
+      const window = AudioScheduler.scheduleAroundPlayhead(current, current.video);
+      if (window.start < current.renderCursor) current.renderCursor = window.start;
+      updateLiveDisplay(current);
+    };
     const onEnded = () => {
       stopSession("Video ended.");
     };
+    current._onPause = onPause;
+    current._onPlay = onPlay;
+    current._onSeeked = onSeeked;
     current._onEnded = onEnded;
+    video.addEventListener("pause", onPause);
+    video.addEventListener("play", onPlay);
+    video.addEventListener("seeked", onSeeked);
     video.addEventListener("ended", onEnded);
 
     if (current.wasPlaying) {
       try { await video.play(); } catch {}
     }
+    current.startupPreparing = false;
     setProbe("Translating");
     emitState({ running: true, status: "Translating", errorMessage: "" });
     void runRollingRenderer(current);
@@ -541,6 +591,15 @@
       current.stopFlag = true;
       try { current.abortController.abort(); } catch {}
       AudioScheduler.cancelPendingSources(current);
+      if (current._onPause) {
+        try { current.video.removeEventListener("pause", current._onPause); } catch {}
+      }
+      if (current._onPlay) {
+        try { current.video.removeEventListener("play", current._onPlay); } catch {}
+      }
+      if (current._onSeeked) {
+        try { current.video.removeEventListener("seeked", current._onSeeked); } catch {}
+      }
       if (current._onEnded) {
         try { current.video.removeEventListener("ended", current._onEnded); } catch {}
       }
@@ -550,6 +609,9 @@
         current.video.volume = current.originalVolume;
         current.video.muted = current.originalMuted;
       } catch {}
+      if (current.startupPreparing && current.wasPlaying && current.video.paused) {
+        try { void current.video.play().catch(() => {}); } catch {}
+      }
     }
     session = null;
     if (shouldRemove) removeProbe();
