@@ -1,44 +1,51 @@
-SUB-TO-VOICE-PRO — AGENT BUILD GOAL / NON-NEGOTIABLE BASELINE
-================================================================
+SUB-TO-VOICE-PRO — AGENT BUILD GOAL / LOCKED BASELINE
+=====================================================
 
 ROLE
-You are the implementation agent for this project. Build the product inside:
+Build the product inside:
   my-sub-to-voice
 
-The sibling reference folder is:
+Reference source:
   ../references
 
-The Echoly source already placed under ../references is the architectural baseline and MUST be studied before writing product code.
+The Echoly source under ../references is the architectural baseline. Read it before writing product code.
 
 FINAL PRODUCT GOAL
-Build a Chrome Manifest V3 extension for YouTube VOD videos that have captions:
+Build a Chrome Manifest V3 extension for normal YouTube VOD videos that already have captions:
+
   YouTube captions
+    -> parse JSON3
     -> regroup/dedupe into sentence-sized units
-    -> translate in batches through a configurable Translation Provider
-    -> synthesize each translated sentence through a configurable TTS Provider
+    -> translate in ordered batches
+    -> synthesize each translated sentence with TTS
     -> receive complete audio bytes
     -> Web Audio decodeAudioData()
     -> AudioBufferSourceNode
-    -> schedule the dub at the original subtitle timestamp
-    -> GainNode
+    -> schedule at original subtitle timestamp
+    -> shared GainNode
     -> speaker
 
-The intended user experience is Echoly's "subtitle-first" mode: prepare a small first wave, resume the video quickly, then keep translation/TTS rendered ahead of the playhead so dubbed audio is already buffered when its timestamp arrives.
+The intended behavior is Echoly subtitle-first:
+- prepare a very small first wave
+- resume the video quickly
+- keep translation + TTS rendered ahead of the playhead
+- when a subtitle timestamp arrives, its AudioBuffer should already be ready
 
 SOURCE OF TRUTH: ECHOLY
-Before creating or changing implementation files:
-1. Locate the Echoly reference inside ../references. Do not guess a path if the folder name differs; inspect ../references and find the copy containing content.js, background.js, manifest.json.
-2. Read the relevant Echoly code in full before porting it.
-3. Treat Echoly subtitle-first behavior as the baseline. Port/adapt it with minimal changes. Do NOT replace it with a different subtitle, translation, TTS, or audio scheduling architecture because another design looks cleaner.
+Before implementation:
+1. Inspect ../references and locate the Echoly copy containing content.js, background.js, manifest.json.
+2. Read the relevant Echoly subtitle-first code in full.
+3. Port/adapt it with minimal changes.
 4. NEVER edit files under ../references.
-5. Where logic is ported, keep function boundaries and naming close enough to Echoly that behavior can be compared easily.
-6. Echoly is MIT licensed. Preserve required attribution/license notices for copied/adapted code.
+5. Keep function boundaries/naming close enough to Echoly that behavior is easy to compare.
+6. Preserve MIT attribution/license requirements for copied/adapted code.
 
-MANDATORY ECHOLY FUNCTIONS / AREAS TO STUDY FIRST
+MANDATORY ECHOLY AREAS TO STUDY
 Background:
-- ytCaptionCache and chrome.webRequest timedtext interception
-- GET_YT_CC_URL message handling
-- session/settings relay patterns that are relevant to the reduced product
+- ytCaptionCache
+- chrome.webRequest timedtext interception
+- GET_YT_CC_URL
+- relevant session/message patterns
 
 Content:
 - getYouTubeVideoId
@@ -66,26 +73,25 @@ Content:
 - stopSession
 
 LOCKED ECHOLY BEHAVIOR
-Unless a browser test proves a defect and the user explicitly approves a change, preserve these subtitle-first tuning values and ideas:
+Preserve unless a real browser test proves a defect and the user approves a change:
 - translation batch size: 10 sentences
 - lookahead: 30 seconds
 - TTS render concurrency: 5 workers
-- regroup sentence boundary gap: 1500 ms
-- regroup maximum words: 15
-- first wave: 2 forward sentences from the current playhead
-- pause the YouTube VOD only while preparing the initial first wave
-- audio sync model:
+- regroup gap: 1500 ms
+- regroup max words: 15
+- first wave: 2 forward sentences from current playhead
+- pause YouTube only while preparing initial first wave
+- audio sync:
     audioOffset = audioContext.currentTime - video.currentTime
     playAt = audioOffset + sentence.start
 - schedule with AudioBufferSourceNode.start(playAt)
-- seek: cancel scheduled dub sources, recompute audioOffset, schedule around the new playhead
-- original YouTube audio and dubbed voice are separate audio paths
-- dubbed voice goes through a GainNode
-- rolling renderer keeps translation/TTS prepared ahead of the playhead
-- if a scheduled cue is already materially late, skip it rather than blasting stale speech over the next cue
+- seek: cancel scheduled sources -> recompute audioOffset -> schedule around new playhead
+- original YouTube audio and dubbed voice remain separate
+- dubbed voice uses one shared GainNode
+- rolling renderer keeps translation/TTS ahead of playhead
+- materially late cues are skipped instead of playing stale speech over the next cue
 
 ONLY APPROVED ARCHITECTURAL CHANGE: PROVIDER ABSTRACTION
-Echoly currently binds translation/TTS details too closely to specific providers/models. This project MUST decouple both.
 
 Translation core contract:
   translateBatch({
@@ -96,11 +102,11 @@ Translation core contract:
   }) -> Promise<string[]>
 
 Rules:
-- output array MUST align 1:1 with input lines
-- core pipeline must not know "Gemini", "OpenAI", "Kyma", or any company-specific request body
-- provider adapter owns URL, auth headers, model name, request shape, and response parsing
-- model name is configuration, never hard-coded in the core pipeline
-- keep the Echoly dubbing translation behavior: concise, natural translation intended to fit the source speaking window; strict ordered output
+- output MUST align 1:1 with input order
+- core pipeline must not know Gemini/OpenAI/company-specific request bodies
+- provider adapter owns URL, auth, model, request shape, response parsing
+- model is config, never hard-coded in core
+- preserve Echoly dubbing translation style: natural, concise, ordered, preserve names/brands/technical terms
 
 TTS core contract:
   synthesize({
@@ -114,184 +120,168 @@ TTS core contract:
   }>
 
 Rules:
-- core pipeline must not know "MiniMax", "VieNeu", "Kyma", "Novita", or any company-specific schema
-- provider adapter owns URL, auth, model, voice field mapping, request shape, and response parsing
-- request complete-file audio for this phase (MP3 or WAV preferred)
-- NO streaming PCM/AudioWorklet architecture in this phase
-- the shared audio layer receives bytes, calls decodeAudioData(), stores AudioBuffer, and hands it to the unchanged scheduler
-- adding provider C/D later must not require edits to caption logic, dubbing pipeline, decoder, or scheduler
+- core pipeline must not know MiniMax/VieNeu/Kyma/NovAI/company-specific schemas
+- provider adapter owns URL, auth, model, voice mapping, request/response format
+- use complete-file MP3/WAV in this phase
+- NO streaming PCM / AudioWorklet
+- shared audio layer runs decodeAudioData() and hands AudioBuffer to the Echoly-style scheduler
+- changing provider/model later must not require edits to caption logic or scheduler
 
-INITIAL PROVIDER STRATEGY
-Implement a small provider registry, not provider checks scattered across the app.
-At minimum support:
-1. an OpenAI-compatible translation adapter with configurable base URL + model + API key where possible
-2. an OpenAI-compatible TTS adapter with configurable base URL + model + API key + voice where possible
-3. a provider-specific adapter only when a provider's schema actually differs
-4. VieNeu TTS support as a first-class selectable provider if the user's v4 API contract requires fields that differ from the generic adapter
+INITIAL REAL PROVIDERS FOR TESTING
+For the first working build only:
+- Translation: Gemini API
+- TTS: NovAI API using MiniMax Speech Turbo
 
-Do not create a backend/proxy server unless the user explicitly asks for one. The extension should call configured provider APIs directly, following Chrome MV3 permissions rules.
+These are initial adapters for proving the architecture, not permanent core dependencies.
+
+LOCAL TEST CREDENTIALS
+Use a root .env:
+
+  GEMINI_API_KEY=
+  NOVAI_API_KEY=
+
+Requirements:
+- .env MUST be gitignored
+- commit .env.example with blank placeholders
+- never commit real keys
+- never log full keys
+- do NOT build credential/provider UI yet
+
+Chrome extensions cannot read root .env directly at runtime.
+For browser testing without UI, create the smallest development-only bridge:
+- a small script/tool reads .env
+- it generates or injects a local runtime config for the unpacked extension
+- any generated secret-bearing file MUST be gitignored
+- keep provider interfaces intact; do not scatter direct global key reads through core code
+- do not create a backend server merely to load .env
+
+REAL API TEST POLICY — REQUIRED FROM PHASE 2 ONWARD
+Every phase from Phase 2 onward must include a real-provider smoke test when that phase touches provider/browser behavior.
+
+Quota policy:
+- deliberately tiny inputs only
+- Gemini connectivity/parsing test: 1–2 very short lines
+- NovAI TTS test: one very short Vietnamese sentence
+- browser E2E: only a short playback window
+- reuse generated test outputs where possible
+- no aggressive automatic retries
+- stop once the phase behavior is proven
+- never claim a real API test passed if it was not executed
 
 APPROVED FIX RELATIVE TO ECHOLY
-Subtitle-first dub audio must truly respect YouTube pause/resume:
-- on pause: stop/cancel pending scheduled dub sources and suspend or otherwise stop dub playback cleanly
-- on resume: resume the AudioContext if needed, recompute audioOffset from the current video.currentTime, then schedule around the playhead again
+Subtitle-first dub must respect YouTube pause/resume:
+- pause:
+  cancel pending scheduled dub sources
+  stop/suspend dub playback cleanly
+- resume:
+  resume AudioContext if needed
+  recompute audioOffset from video.currentTime
+  schedule around playhead again
 - keep Echoly seek behavior
-This fix must not be turned into a new scheduler architecture.
+- do NOT replace scheduler architecture
 
-OUT OF SCOPE FOR THIS BUILD
-Do NOT implement any of the following unless the user later requests it:
-- Echoly Realtime/WebRTC/OpenAI Realtime mode
+OUT OF SCOPE FOR CURRENT MVP
+Do NOT implement yet:
+- production popup/settings UI
+- polished UI
+- Realtime/WebRTC/OpenAI Realtime mode
 - captureStream live translation
-- MediaRecorder 5-second fallback
-- audio-understand / speech recognition fallback
-- support for YouTube videos with no subtitle track
+- MediaRecorder fallback
+- audio-understand/speech-recognition fallback
+- videos without captions
 - live streams
-- YouTube playback-rate support or rate-aware scheduling
-- streaming TTS playback
-- AudioWorklet-based streaming
+- playback-rate-aware scheduling
+- streaming TTS
+- AudioWorklet streaming
 - Funlingo integration
-- multi-site support outside YouTube
-- a new server/backend
-- automatic duration fitting, forced time-stretching, or complex voice overlap correction
-- unrelated refactors of working Echoly behavior
+- non-YouTube sites
+- backend/proxy server
+- complex time-stretch/duration fitting
+- unrelated architecture rewrites
 
-IF A VIDEO HAS NO CAPTIONS
-Stop cleanly and show a clear message such as:
+IF VIDEO HAS NO CAPTIONS
+Stop cleanly with a clear message such as:
   "This phase requires a YouTube caption track."
-Do NOT silently invent a fallback pipeline.
-
-TRANSLATION BEHAVIOR
-Keep Echoly's sentence regrouping and ordered batch translation semantics.
-The translation prompt should preserve:
-- natural target-language dubbing
-- concise wording
-- names/brands/technical terms
-- same output order and same item count as input
-Do not send one network request per tiny YouTube ASR cue if regrouping can produce useful sentence units.
+Do not invent a fallback pipeline.
 
 TTS / AUDIO BEHAVIOR
 For each translated sentence:
 1. call configured TTS provider
-2. receive the complete audio response
-3. convert response to ArrayBuffer
-4. decode with the shared AudioContext
-5. store the resulting AudioBuffer on/against the sentence
-6. schedule it with Echoly's timestamp model
-7. connect source -> shared output GainNode -> audioContext.destination
+2. receive complete audio response
+3. convert to ArrayBuffer
+4. decode with shared AudioContext
+5. associate AudioBuffer with the sentence
+6. schedule using Echoly timestamp model
+7. connect:
+   AudioBufferSourceNode -> shared GainNode -> audioContext.destination
 
-Do not use HTMLAudioElement as the primary subtitle-first scheduler.
-Do not call audio.play() per subtitle.
-Do not replace timestamp scheduling with setTimeout/setInterval polling.
+Do NOT:
+- use HTMLAudioElement as primary scheduler
+- call audio.play() per subtitle
+- replace timestamp scheduling with setTimeout/setInterval polling
 
-MINIMAL PRODUCT UI
-Keep UI simple. It only needs what is required to operate and test the product:
-- Translation provider
-- Translation API base URL if needed
-- Translation model
-- Translation API key
-- Target language
-- TTS provider
-- TTS API base URL if needed
-- TTS model
-- TTS voice
-- TTS API key
-- Original YouTube volume
-- Dub volume
-- Start
-- Stop
-- clear status/error text
+CURRENT TEST CONTROL / CONFIG
+Until UI is built later, use:
+- root .env for secrets
+- committed non-secret provider defaults/config for model/base URL/voice if useful
+- development-only generated local config bridge for Chrome runtime
+- the smallest temporary Start/Stop/debug control that changes Echoly least
 
-Preserve a lightweight Echoly-style in-page status/translation overlay if useful for validating the pipeline. Do not spend early phases rebuilding visual design.
-
-SECRETS / STORAGE
-- Never hard-code real API keys.
-- Never commit credentials.
-- Store user-entered credentials locally using chrome.storage.local.
-- Restrict storage access to trusted extension contexts where Chrome supports it, following Echoly's pattern.
-- Never print full API keys to console/logs.
-- Keep any example config filled only with placeholders.
-
-PROJECT STYLE
-- Chrome Manifest V3.
-- Prefer Echoly's plain JavaScript approach.
-- No React/Vite/framework/build system unless a concrete blocker makes it necessary and the user approves.
-- Avoid dependencies unless there is a clear requirement.
-- Keep modules small enough to understand, but do not perform an architecture rewrite merely for style.
-- The scheduler remains Web Audio based.
-
-RECOMMENDED PRODUCT SOURCE LAYOUT
-Use this layout unless the existing product folder already has an equivalent structure:
-  manifest.json
-  src/
-    background.js
-    content.js
-    core/
-      dubbing-pipeline.js
-    youtube/
-      captions.js
-      sentence-regrouper.js
-    translation/
-      provider.js
-      manager.js
-      providers/
-        openai-compatible.js
-    tts/
-      provider.js
-      manager.js
-      providers/
-        openai-compatible.js
-        vieneu.js
-    audio/
-      decoder.js
-      dub-scheduler.js
-    settings/
-      provider-registry.js
-      storage.js
-  popup/
-    popup.html
-    popup.css
-    popup.js
-  tests/
-
-If moving an Echoly function into one of these modules, preserve its semantics and make the mapping obvious.
+Do not spend time on production UI now.
 
 BROWSER TEST REQUIREMENT
-This is not complete because static checks pass. The agent must test it in Chrome as an unpacked extension.
+Static checks are not enough.
 
-For every browser test:
-1. reload the unpacked extension
-2. open/reload a normal YouTube VOD with a known caption track
-3. configure provider credentials through the extension UI; do not paste secrets into source
-4. start the dub
-5. verify caption fetch succeeds
-6. verify translated lines remain ordered
-7. verify first wave is audible at the expected subtitle timestamps
-8. verify rolling lookahead continues generating audio
-9. verify original and dub volume controls work
-10. pause YouTube and verify dub stops
-11. resume and verify dub resynchronizes
-12. seek forward and backward and verify stale scheduled speech is cancelled and the new region is scheduled
-13. stop and verify requests/audio/session resources are cleaned up
-14. inspect DevTools for uncaught errors
+From Phase 2 onward, each completed phase must have:
+1. static/unit check
+2. short real API smoke test for provider behavior involved in that phase
+3. browser test when the phase has browser-visible behavior
 
-If credentials are unavailable, complete all non-live tests and report the live-provider E2E as the exact remaining blocker. Never fake a successful browser test.
+Final browser E2E must verify:
+- caption fetch
+- ordered translation
+- first wave audible at intended timestamps
+- rolling lookahead
+- pause stops dub
+- resume resynchronizes
+- seek cancels stale speech and schedules new region
+- Stop cleans requests/audio/session resources
+- provider errors are visible
+- no uncaught DevTools errors
 
-DEFINITION OF DONE
-The product is done only when:
-- it loads as an unpacked Chrome MV3 extension
-- a captioned YouTube VOD can be dubbed end-to-end
-- translation provider/model can be changed without editing the core pipeline
-- TTS provider/model can be changed without editing the scheduler
-- complete TTS audio is decoded and scheduled with Echoly's Web Audio timestamp method
+If credentials are missing, report the exact blocker. Never fake success.
+
+DEFINITION OF DONE FOR CURRENT MVP
+Done only when:
+- unpacked Chrome MV3 extension loads
+- captioned YouTube VOD dubs end-to-end
+- Gemini is only a translation adapter, not core logic
+- NovAI/MiniMax is only a TTS adapter, not scheduler logic
+- complete TTS audio is decoded and scheduled using Echoly timing
 - first-wave + 30s rolling lookahead works
-- pause/resume and seek remain synchronized
-- missing captions fail clearly with no fallback
-- API errors surface clearly instead of leaving a silent "Translating" state
-- API keys are not committed
-- source passes syntax/static checks
-- browser E2E has been performed and documented
-- each build phase has a clean git commit
-- no force push, no rewriting reference sources
+- pause/resume + seek stay synchronized
+- missing captions fail clearly
+- provider/API failures surface clearly
+- .env secrets are never committed
+- Phase 2+ real API smoke tests were actually executed with tiny inputs
+- final short Chrome E2E was actually executed
+- each phase has a clean git commit
+- reference source remains untouched
+
+DEFERRED UNTIL CORE MVP IS STABLE
+Build production UI later:
+- Translation provider/model/API key
+- TTS provider/model/voice/API key
+- target language
+- volume controls
+- Start/Stop/status
+- chrome.storage.local persistence
 
 WORKING RULE
-When uncertain, go back to the Echoly reference and preserve its subtitle-first behavior. Do not "improve" translation or audio scheduling by inventing a replacement architecture. If a deviation is necessary, document the exact Echoly behavior, the observed failure, the minimal proposed deviation, and ask the user before changing the locked design.
+When uncertain, return to Echoly and preserve subtitle-first behavior.
+Do not "improve" translation or audio scheduling by inventing a new pipeline.
+If a deviation becomes necessary:
+1. document Echoly behavior
+2. document observed failure
+3. propose the smallest deviation
+4. ask user before changing the locked design
