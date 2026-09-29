@@ -86,6 +86,40 @@ test("scheduleWindow exposes the actual audio start and decoded duration", () =>
   assert.equal(item.source.startAt, item.playAt);
 });
 
+test("adjacent TTS audio waits for the previous audio across scheduling windows", () => {
+  const audioCtx = fakeAudioContext(100);
+  const session = {
+    audioCtx, outputGain: {}, audioOffset: 0,
+    sentences: [
+      { start: 100, end: 107.6, _buffer: { duration: 7.76 } },
+      { start: 107.6, end: 112.69, _buffer: { duration: 5.84 } },
+      { start: 112.69, end: 115, _buffer: { duration: 2.08 } }
+    ], pendingSources: []
+  };
+  const [first] = scheduleWindow(session, 0, 1);
+  const [second] = scheduleWindow(session, 1, 2);
+  const [third] = scheduleWindow(session, 2, 3);
+  assert.equal(first.playAt, 100.02);
+  assert.equal(second.playAt, first.playAt + first.duration);
+  assert.equal(third.playAt, second.playAt + second.duration);
+});
+
+test("cancelling scheduled audio clears the wait before scheduling after a seek", () => {
+  const audioCtx = fakeAudioContext(10);
+  const session = {
+    audioCtx, outputGain: {}, audioOffset: 0,
+    sentences: [
+      { start: 11, end: 12, _buffer: { duration: 8 } },
+      { start: 12, end: 13, _buffer: { duration: 1 } }
+    ], pendingSources: []
+  };
+  scheduleWindow(session, 0, 1);
+  cancelPendingSources(session);
+  audioCtx.currentTime = 12;
+  const [next] = scheduleWindow(session, 1, 2);
+  assert.equal(next.playAt, 12.02);
+});
+
 test("cancelPendingSources stops, disconnects and clears scheduling state", () => {
   const audioCtx = fakeAudioContext(1);
   const session = {
