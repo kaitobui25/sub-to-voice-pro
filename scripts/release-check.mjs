@@ -67,7 +67,7 @@ if (permissions.has("activeTab")) {
 }
 
 const example = parseEnv(read(".env.example"));
-for (const key of ["GEMINI_API_KEY"]) {
+for (const key of ["GEMINI_API_KEY1", "GEMINI_API_KEY"]) {
   if (!(key in example)) fail(".env.example is missing " + key);
   if (example[key]) fail(".env.example must keep " + key + " blank.");
 }

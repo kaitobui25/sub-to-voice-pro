@@ -20,7 +20,7 @@ After a 429, the adapter remembers that model's cooldown from Retry-After (or th
 ## Local development
 
 1. Copy .env.example to .env.
-2. Add GEMINI_API_KEY locally.
+2. Add one Gemini key locally as GEMINI_API_KEY1. The legacy GEMINI_API_KEY name is also accepted.
 3. Generate the gitignored runtime bridge:
 
        npm run config

@@ -75,9 +75,9 @@ if (!fs.existsSync(envPath)) {
 
 const env = parseEnv(fs.readFileSync(envPath, "utf8"));
 const config = parseSimpleYaml(fs.readFileSync(configPath, "utf8"));
-const missing = ["GEMINI_API_KEY"].filter((key) => !env[key]);
-if (missing.length) {
-  throw new Error("Missing required key(s): " + missing.join(", "));
+const geminiApiKey = env.GEMINI_API_KEY1 || env.GEMINI_API_KEY;
+if (!geminiApiKey) {
+  throw new Error("Missing GEMINI_API_KEY1 (or legacy GEMINI_API_KEY).");
 }
 
 const runtimeConfig = {
@@ -87,7 +87,7 @@ const runtimeConfig = {
     models: config.translation?.models || [],
     sourceLanguage: config.translation?.source_language || "auto",
     targetLanguage: config.translation?.target_language || "vi",
-    apiKey: env.GEMINI_API_KEY
+    apiKey: geminiApiKey
   },
   tts: {
     provider: config.tts?.provider || "gemini",
@@ -95,7 +95,7 @@ const runtimeConfig = {
     models: config.tts?.models || [],
     voice: config.tts?.voice,
     speed: config.tts?.speed == null ? 1 : config.tts.speed,
-    apiKey: env.GEMINI_API_KEY
+    apiKey: geminiApiKey
   },
   audio: {
     originalVolume: config.audio?.original_volume == null ? 18 : config.audio.original_volume,
