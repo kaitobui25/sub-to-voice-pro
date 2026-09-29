@@ -5,7 +5,7 @@
   "description": "Subtitle-first YouTube dubbing prototype.",
   "version": "0.1.0",
   "minimum_chrome_version": "116",
-  "permissions": ["scripting", "webRequest", "nativeMessaging"],
+  "permissions": ["scripting", "webRequest", "nativeMessaging", "storage"],
   "host_permissions": [
     "https://*.youtube.com/*",
     "https://youtube.com/*",
@@ -19,7 +19,8 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Start Sub-to-Voice"
+    "default_title": "Sub-to-Voice Pro",
+    "default_popup": "popup/popup.html"
   },
   "content_scripts": [
     {

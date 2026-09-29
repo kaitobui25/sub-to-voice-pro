@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sub-to-Voice Pro</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <h1>Sub-to-Voice Pro</h1>
+    <label class="switch-row" for="enabled">
+      <span>
+        <strong>Dịch &amp; đọc voice</strong>
+        <small id="status" role="status">Đang tải…</small>
+      </span>
+      <span class="switch-control">
+        <input id="enabled" type="checkbox" role="switch" disabled>
+        <span class="switch-track" aria-hidden="true"></span>
+      </span>
+    </label>
+    <div class="volume-row">
+      <label for="original-volume">Âm lượng video gốc</label>
+      <output id="volume-value" for="original-volume">—</output>
+    </div>
+    <input id="original-volume" type="range" min="0" max="100" step="1" disabled>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

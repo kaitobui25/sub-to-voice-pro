@@ -654,6 +654,13 @@
           stopSession();
           sendResponse({ ok: true });
           break;
+        case "CONTENT_SET_ORIGINAL_VOLUME":
+          if (session) {
+            session.settings.originalVolume = message.volume;
+            applyVolumes(session);
+          }
+          sendResponse({ ok: true });
+          break;
         default:
           sendResponse({ ok: false, error: "Unknown content message: " + message?.type });
       }

@@ -28,7 +28,9 @@ if (tts.provider === "gemini") {
     baseUrl: tts.baseUrl,
     model: tts.model,
     voice: tts.voice,
-    sampleRate: tts.sampleRate
+    sampleRate: tts.sampleRate,
+    busyRetryTimeoutMs: tts.busyRetryTimeoutMs,
+    busyRetryDelayMs: tts.busyRetryDelayMs
   });
 } else {
   throw new Error("Unsupported configured TTS provider: " + tts.provider);

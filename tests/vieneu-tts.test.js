@@ -93,3 +93,43 @@ test("VieNeu adapter surfaces local API errors", async () => {
   });
   await assert.rejects(provider.synthesize({ text: "Xin chào.", speed: 1 }), /429.*server busy/i);
 });
+
+test("VieNeu adapter retries a busy stream slot and returns audio", async () => {
+  let calls = 0;
+  const provider = createVieNeuTTSProvider({
+    baseUrl: "http://127.0.0.1:8000/v1",
+    model: "model", voice: "voice", sampleRate: 48000,
+    busyRetryTimeoutMs: 1000, busyRetryDelayMs: 1,
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) return {
+        ok: false, status: 429, headers: { get: () => null },
+        async text() { return "server busy"; }
+      };
+      return {
+        ok: true, status: 200, headers: { get: () => "audio/wav" },
+        async arrayBuffer() { return makeStreamingWav(); }
+      };
+    }
+  });
+  const result = await provider.synthesize({ text: "hello" });
+  assert.equal(calls, 2);
+  assert.equal(result.mimeType, "audio/wav");
+});
+
+test("VieNeu busy retry stops when synthesis is cancelled", async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const provider = createVieNeuTTSProvider({
+    baseUrl: "http://127.0.0.1:8000/v1",
+    model: "model", voice: "voice", sampleRate: 48000,
+    busyRetryTimeoutMs: 5000, busyRetryDelayMs: 1000,
+    fetchImpl: async () => {
+      calls += 1;
+      queueMicrotask(() => controller.abort());
+      return { ok: false, status: 429, headers: { get: () => null } };
+    }
+  });
+  await assert.rejects(provider.synthesize({ text: "hello", signal: controller.signal }), { name: "AbortError" });
+  assert.equal(calls, 1);
+});

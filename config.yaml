@@ -50,6 +50,8 @@ vieneu_tts:
   voice: Hải Đăng
   sample_rate: 48000
   max_concurrency: 1
+  busy_retry_timeout_ms: 120000
+  busy_retry_delay_ms: 2000
 
 audio:
   original_volume: 18

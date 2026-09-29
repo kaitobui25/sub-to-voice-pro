@@ -92,6 +92,8 @@ const ttsConfig = ttsProvider === "vieneu"
       voice: config.vieneu_tts?.voice,
       sampleRate: config.vieneu_tts?.sample_rate,
       maxConcurrency: config.vieneu_tts?.max_concurrency,
+      busyRetryTimeoutMs: config.vieneu_tts?.busy_retry_timeout_ms,
+      busyRetryDelayMs: config.vieneu_tts?.busy_retry_delay_ms,
       speed: ttsSpeed
     }
   : {

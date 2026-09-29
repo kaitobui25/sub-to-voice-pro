@@ -1,0 +1,20 @@
+:root { color-scheme: light; font: 14px system-ui, sans-serif; }
+body { width: 286px; margin: 0; color: #182132; background: #fff; }
+main { padding: 18px; }
+h1 { margin: 0 0 18px; font-size: 16px; }
+.switch-row, .volume-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.switch-row { cursor: pointer; }
+.switch-row strong { display: block; font-weight: 600; }
+.switch-row small { display: block; margin-top: 4px; color: #657084; line-height: 1.35; }
+.switch-control { position: relative; flex: 0 0 38px; height: 22px; }
+.switch-control input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.switch-track { display: block; width: 38px; height: 22px; border-radius: 11px; background: #9ba5b5; transition: background .15s; }
+.switch-track::after { content: ""; display: block; position: relative; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.switch-control input:checked + .switch-track { background: #2563eb; }
+.switch-control input:checked + .switch-track::after { transform: translateX(16px); }
+.switch-control input:focus-visible + .switch-track { outline: 2px solid #1d4ed8; outline-offset: 2px; }
+.switch-control input:disabled + .switch-track { opacity: .55; }
+.volume-row { margin-top: 24px; }
+.volume-row output { font-variant-numeric: tabular-nums; color: #44516a; }
+#original-volume { width: 100%; margin: 12px 0 2px; accent-color: #2563eb; cursor: pointer; }
+#original-volume:disabled { cursor: default; }

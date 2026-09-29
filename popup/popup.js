@@ -1,0 +1,92 @@
+"use strict";
+
+const enabled = document.getElementById("enabled");
+const volume = document.getElementById("original-volume");
+const volumeValue = document.getElementById("volume-value");
+const status = document.getElementById("status");
+let tabId = null;
+let volumeTimer = null;
+let pendingVolume = Promise.resolve();
+
+async function request(message) {
+  const reply = await chrome.runtime.sendMessage(message);
+  if (!reply?.ok) throw new Error(reply?.error || "Không thể kết nối extension.");
+  return reply;
+}
+
+function showError(error) {
+  status.textContent = error?.message || String(error);
+}
+
+async function initialize() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    tabId = tab?.id;
+    const state = await request({ type: "GET_POPUP_STATE", tabId });
+    enabled.checked = Boolean(state.enabled);
+    enabled.disabled = !state.canStart && !state.enabled;
+    status.textContent = state.error || (state.canStart ? state.status : "Mở một video YouTube để bật.");
+    volume.value = state.originalVolume;
+    volumeValue.value = state.originalVolume + "%";
+    volume.disabled = false;
+  } catch (error) {
+    showError(error);
+  }
+}
+
+async function refreshStatus() {
+  if (tabId == null || enabled.disabled) return;
+  try {
+    const state = await request({ type: "GET_POPUP_STATE", tabId });
+    enabled.checked = Boolean(state.enabled);
+    status.textContent = state.error || state.status;
+  } catch (error) {
+    showError(error);
+  }
+}
+
+enabled.addEventListener("change", async () => {
+  const requested = enabled.checked;
+  enabled.disabled = true;
+  status.textContent = requested ? "Đang bật…" : "Đang tắt…";
+  try {
+    if (volumeTimer) {
+      clearTimeout(volumeTimer);
+      volumeTimer = null;
+      saveVolume();
+    }
+    await pendingVolume;
+    const result = await request({ type: "SET_ENABLED", tabId, enabled: requested });
+    enabled.checked = Boolean(result.enabled);
+    status.textContent = result.status;
+  } catch (error) {
+    enabled.checked = !requested;
+    showError(error);
+  } finally {
+    enabled.disabled = false;
+  }
+});
+
+function saveVolume() {
+  const selected = Number(volume.value);
+  pendingVolume = pendingVolume.then(() => request({
+    type: "SET_ORIGINAL_VOLUME", volume: selected
+  })).catch(showError);
+  return pendingVolume;
+}
+
+volume.addEventListener("input", () => {
+  volumeValue.value = volume.value + "%";
+  clearTimeout(volumeTimer);
+  volumeTimer = setTimeout(saveVolume, 100);
+});
+volume.addEventListener("change", () => {
+  clearTimeout(volumeTimer);
+  void saveVolume();
+});
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type === "CONTENT_STATE") void refreshStatus();
+});
+
+void initialize();

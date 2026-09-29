@@ -30,7 +30,7 @@ After a 429, the adapter remembers that model's cooldown from Retry-After (or th
 5. Open chrome://extensions.
 6. Enable Developer mode, choose Load unpacked, and select this folder.
 7. Open a normal captioned YouTube VOD at 1x speed.
-8. Click the extension action to Start or Stop.
+8. Click the extension action to open the popup. Use the switch to start or stop dubbing and the slider to set the original video volume while dubbing.
 
 runtime-config.local.json contains local development credentials. It is generated from .env, is gitignored, and must not be committed or shared.
 

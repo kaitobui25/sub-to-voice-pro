@@ -70,7 +70,10 @@ test("Stop then Start reuses captions already fetched for the same video", async
   const send = (type) => new Promise((resolve) => messageHandler({ type }, {}, resolve));
 
   assert.equal((await send("CONTENT_START")).ok, true);
+  await new Promise((resolve) => messageHandler({ type: "CONTENT_SET_ORIGINAL_VOLUME", volume: 35 }, {}, resolve));
+  assert.equal(video.volume, 0.35);
   assert.equal((await send("CONTENT_STOP")).ok, true);
+  assert.equal(video.volume, 1);
   assert.equal((await send("CONTENT_START")).ok, true);
   assert.equal(fetchCount, 1);
   await send("CONTENT_STOP");

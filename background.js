@@ -44,6 +44,16 @@ async function loadRuntimeConfig() {
   return runtimeConfigPromise;
 }
 
+function validVolume(value) {
+  return Number.isInteger(value) && value >= 0 && value <= 100;
+}
+
+async function originalVolumeSetting(config) {
+  const saved = await chrome.storage.local.get("originalVolume");
+  return validVolume(saved.originalVolume)
+    ? saved.originalVolume : config.audio?.originalVolume ?? 18;
+}
+
 function publicRuntimeSettings(config) {
   return {
     sourceLanguage: config.translation?.sourceLanguage || "auto",
@@ -109,8 +119,8 @@ async function setActionState(status, failed) {
   const title = failed
     ? "Sub-to-Voice: " + (state.errorMessage || "Error")
     : (state.running || state.starting)
-      ? "Stop Sub-to-Voice"
-      : "Start Sub-to-Voice";
+      ? "Sub-to-Voice Pro: đang bật"
+      : "Sub-to-Voice Pro: đang tắt";
   await chrome.action.setTitle({ title }).catch(() => {});
 }
 
@@ -211,7 +221,9 @@ async function startInTab(tab) {
   };
   await setActionState("loading", false);
   await SubToVoiceProviderRuntime.ensureTTSReady((await loadRuntimeConfig()).tts);
+  if (generation !== stateGeneration) return { ok: false, cancelled: true };
   await ensureContentScript(tab.id);
+  if (generation !== stateGeneration) return { ok: false, cancelled: true };
 
   const reply = await chrome.tabs.sendMessage(tab.id, { type: "CONTENT_START" });
   if (generation !== stateGeneration) {
@@ -227,23 +239,6 @@ async function startInTab(tab) {
   await setActionState("running", false);
   return reply;
 }
-
-chrome.action.onClicked.addListener(async (tab) => {
-  try {
-    if ((state.running || state.starting) && state.tabId === tab.id) {
-      await stopActiveSession();
-      return;
-    }
-    const reply = await startInTab(tab);
-    if (reply?.cancelled) return;
-  } catch (error) {
-    state.running = false;
-    state.starting = false;
-    state.status = "Error";
-    state.errorMessage = error?.message || String(error);
-    await setActionState("idle", true);
-  }
-});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.tab && message?.type === "GET_YT_CC_URL") {
@@ -265,10 +260,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (sender.tab && message?.type === "GET_RUNTIME_SETTINGS") {
-    loadRuntimeConfig().then(
-      (config) => sendResponse({ ok: true, settings: publicRuntimeSettings(config) }),
-      (error) => sendResponse({ ok: false, error: error?.message || String(error) })
-    );
+    (async () => {
+      const config = await loadRuntimeConfig();
+      const settings = publicRuntimeSettings(config);
+      settings.originalVolume = await originalVolumeSetting(config);
+      sendResponse({ ok: true, settings });
+    })().catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
     return true;
   }
 
@@ -314,6 +311,64 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!sender.tab && message?.type === "GET_STATE") {
     sendResponse({ ok: true, state: snapshot() });
     return false;
+  }
+
+  if (!sender.tab && message?.type === "GET_POPUP_STATE") {
+    (async () => {
+      const config = await loadRuntimeConfig();
+      const tabId = Number(message.tabId);
+      const tab = Number.isInteger(tabId) ? await chrome.tabs.get(tabId) : null;
+      sendResponse({
+        ok: true,
+        enabled: state.tabId === tabId && (state.running || state.starting),
+        canStart: isYouTubeWatchUrl(tab?.url),
+        status: state.tabId === tabId ? state.status : "Ready",
+        error: state.tabId === tabId ? state.errorMessage : "",
+        originalVolume: await originalVolumeSetting(config)
+      });
+    })().catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (!sender.tab && message?.type === "SET_ENABLED") {
+    (async () => {
+      const tabId = Number(message.tabId);
+      if (!Number.isInteger(tabId)) throw new Error("No active tab selected.");
+      if (message.enabled) {
+        if (!(state.tabId === tabId && (state.running || state.starting))) {
+          const tab = await chrome.tabs.get(tabId);
+          await startInTab(tab);
+        }
+      } else if (state.tabId === tabId && (state.running || state.starting)) {
+        await stopActiveSession();
+      }
+      sendResponse({ ok: true, enabled: state.tabId === tabId && (state.running || state.starting), status: state.status });
+    })().catch(async (error) => {
+      const errorMessage = error?.message || String(error);
+      if (state.tabId === Number(message.tabId)) {
+        state.running = false;
+        state.starting = false;
+        state.status = "Error";
+        state.errorMessage = errorMessage;
+        await setActionState("idle", true);
+      }
+      sendResponse({ ok: false, error: errorMessage });
+    });
+    return true;
+  }
+
+  if (!sender.tab && message?.type === "SET_ORIGINAL_VOLUME") {
+    (async () => {
+      if (!validVolume(message.volume)) throw new Error("Volume must be between 0 and 100.");
+      await chrome.storage.local.set({ originalVolume: message.volume });
+      if (state.tabId && (state.running || state.starting)) {
+        await chrome.tabs.sendMessage(state.tabId, {
+          type: "CONTENT_SET_ORIGINAL_VOLUME", volume: message.volume
+        }).catch(() => {});
+      }
+      sendResponse({ ok: true, originalVolume: message.volume });
+    })().catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
   }
 
   if (!sender.tab && message?.type === "STOP") {
