@@ -23,6 +23,7 @@
 
   let session = null;
   let lastUrl = location.href;
+  let cachedCaptions = null;
 
   function getYouTubeVideoId() {
     try {
@@ -461,15 +462,17 @@
     setProbe("Loading captions…");
     try { video.pause(); } catch {}
 
-    let result = null;
-    try {
-      result = await fetchYouTubeCaptions(
-        videoId,
-        settings.targetLanguage || "vi",
-        abortController.signal
-      );
-    } catch {
-      result = null;
+    const targetLanguage = settings.targetLanguage || "vi";
+    let result = cachedCaptions?.videoId === videoId &&
+      cachedCaptions.targetLanguage === targetLanguage
+      ? cachedCaptions.result : null;
+    if (!result) {
+      try {
+        result = await fetchYouTubeCaptions(videoId, targetLanguage, abortController.signal);
+        if (result?.captions?.length) cachedCaptions = { videoId, targetLanguage, result };
+      } catch {
+        result = null;
+      }
     }
 
     if (session !== current || abortController.signal.aborted) {
@@ -490,7 +493,7 @@
     }
 
     const sentences = result.kind === "asr"
-      ? result.captions
+      ? result.captions.map((caption) => ({ ...caption }))
       : CaptionCore.regroupToSentences(result.captions);
     current.sentences = sentences;
     current.translations = new Array(sentences.length);
@@ -634,6 +637,7 @@
   setInterval(() => {
     if (location.href === lastUrl) return;
     lastUrl = location.href;
+    if (cachedCaptions && cachedCaptions.videoId !== getYouTubeVideoId()) cachedCaptions = null;
     if (session) stopSession("YouTube navigated.");
   }, 500);
 
