@@ -2,7 +2,9 @@
 
 importScripts(
   "lib/translation-core.js",
-  "lib/providers/gemini.js"
+  "lib/providers/gemini.js",
+  "lib/tts-core.js",
+  "lib/providers/novai.js"
 );
 
 const ytCaptionCache = new Map();
@@ -79,6 +81,43 @@ async function translateWithConfiguredProvider(message, signal) {
     targetLanguage: message.targetLanguage || translation.targetLanguage || "vi",
     signal
   });
+}
+
+async function synthesizeWithConfiguredProvider(message, signal) {
+  const config = await loadRuntimeConfig();
+  const tts = config.tts || {};
+  const providerName = tts.provider || "novai";
+  if (providerName !== "novai") {
+    throw new Error("Unsupported TTS provider: " + providerName);
+  }
+
+  const registry = new SubToVoiceTTSCore.TTSProviderRegistry();
+  registry.register(providerName, SubToVoiceNovAI.createNovAIProvider({
+    apiKey: tts.apiKey,
+    baseUrl: tts.baseUrl,
+    model: tts.model,
+    voice: tts.voice
+  }));
+  const manager = new SubToVoiceTTSCore.TTSManager({
+    registry,
+    provider: providerName
+  });
+  return manager.synthesize({
+    text: message.text,
+    voice: message.voice || tts.voice,
+    speed: message.speed ?? tts.speed ?? 1,
+    signal
+  });
+}
+
+function arrayBufferToBase64(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
 }
 
 function isYouTubeWatchUrl(url) {
@@ -250,6 +289,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (requestId) providerRequestControllers.set(requestId, controller);
     translateWithConfiguredProvider(message, controller.signal).then(
       (lines) => sendResponse({ ok: true, lines }),
+      (error) => sendResponse({ ok: false, error: error?.message || String(error) })
+    ).finally(() => {
+      if (requestId) providerRequestControllers.delete(requestId);
+    });
+    return true;
+  }
+
+  if (sender.tab && message?.type === "SYNTHESIZE") {
+    const requestId = String(message.requestId || "");
+    const controller = new AbortController();
+    if (requestId) providerRequestControllers.set(requestId, controller);
+    synthesizeWithConfiguredProvider(message, controller.signal).then(
+      (result) => sendResponse({
+        ok: true,
+        audioBase64: arrayBufferToBase64(result.audio),
+        mimeType: result.mimeType
+      }),
       (error) => sendResponse({ ok: false, error: error?.message || String(error) })
     ).finally(() => {
       if (requestId) providerRequestControllers.delete(requestId);
