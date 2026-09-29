@@ -13,6 +13,7 @@
 
   const DEFAULT_RENDER_CONCURRENCY = 5;
   const VOICE_GAIN_MAX = 2;
+  const PROBE_LAYOUT_KEY = "stv-probe-layout";
 
   const YT_CC_BUTTON_SELECTORS = [
     "button.ytp-subtitles-button",
@@ -24,6 +25,60 @@
   let session = null;
   let lastUrl = location.href;
   let cachedCaptions = null;
+  let probeResizeObserver = null;
+
+  function saveProbeLayout(root) {
+    try {
+      const rect = root.getBoundingClientRect();
+      localStorage.setItem(PROBE_LAYOUT_KEY, JSON.stringify({
+        left: rect.left, top: rect.top, width: rect.width, height: rect.height
+      }));
+    } catch {
+      // The overlay still works when page storage is unavailable.
+    }
+  }
+
+  function setupProbeLayout(root) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PROBE_LAYOUT_KEY) || "null");
+      if (saved && [saved.left, saved.top, saved.width, saved.height].every(Number.isFinite)) {
+        root.style.width = Math.max(220, Math.min(saved.width, innerWidth)) + "px";
+        root.style.height = Math.max(90, Math.min(saved.height, innerHeight)) + "px";
+        root.style.left = Math.max(0, Math.min(saved.left, innerWidth - root.offsetWidth)) + "px";
+        root.style.top = Math.max(0, Math.min(saved.top, innerHeight - root.offsetHeight)) + "px";
+        root.style.right = "auto";
+      }
+    } catch {
+      // Ignore invalid or unavailable saved layout.
+    }
+
+    root.querySelector("strong").addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const rect = root.getBoundingClientRect();
+      const offsetX = event.clientX - rect.left;
+      const offsetY = event.clientY - rect.top;
+      const move = (next) => {
+        root.style.left = Math.max(0, Math.min(next.clientX - offsetX, innerWidth - root.offsetWidth)) + "px";
+        root.style.top = Math.max(0, Math.min(next.clientY - offsetY, innerHeight - root.offsetHeight)) + "px";
+        root.style.right = "auto";
+      };
+      const stop = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", stop);
+        window.removeEventListener("pointercancel", stop);
+        saveProbeLayout(root);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", stop);
+      window.addEventListener("pointercancel", stop);
+    });
+
+    if (typeof ResizeObserver !== "undefined") {
+      probeResizeObserver = new ResizeObserver(() => saveProbeLayout(root));
+      probeResizeObserver.observe(root);
+    }
+  }
 
   function getYouTubeVideoId() {
     try {
@@ -248,6 +303,7 @@
       '<div data-stv-sample></div>'
     ].join("");
     document.documentElement.appendChild(root);
+    setupProbeLayout(root);
     return root;
   }
 
@@ -260,6 +316,8 @@
   }
 
   function removeProbe() {
+    probeResizeObserver?.disconnect();
+    probeResizeObserver = null;
     document.getElementById("stv-probe")?.remove();
   }
 

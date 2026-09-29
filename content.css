@@ -4,18 +4,32 @@
   right: 16px;
   z-index: 2147483647;
   width: min(360px, calc(100vw - 32px));
+  min-width: 220px;
+  min-height: 90px;
   padding: 12px 14px;
+  box-sizing: border-box;
+  resize: both;
+  overflow: auto;
   border-radius: 10px;
   background: rgba(20, 20, 20, 0.94);
   color: #fff;
   font: 13px/1.45 system-ui, sans-serif;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+
+#stv-probe * {
+  -webkit-user-select: text !important;
+  user-select: text !important;
 }
 
 #stv-probe strong {
   display: block;
   margin-bottom: 5px;
   font-size: 14px;
+  cursor: move;
+  touch-action: none;
 }
 
 #stv-probe [data-stv-status] {
@@ -24,8 +38,6 @@
 
 #stv-probe [data-stv-sample] {
   margin-top: 8px;
-  max-height: 120px;
-  overflow: auto;
   white-space: pre-wrap;
   color: #bbb;
 }
