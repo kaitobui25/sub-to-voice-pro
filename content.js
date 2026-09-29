@@ -169,25 +169,26 @@
     return [...tracks].sort((a, b) => score(b) - score(a))[0];
   }
 
-  async function fetchJson3(url, signal) {
+  async function fetchJson3(url, signal, kind) {
     const target = url.includes("fmt=") ? url : url + "&fmt=json3";
     const response = await fetch(target, { credentials: "include", signal });
     if (!response.ok) return null;
     const json = await response.json().catch(() => null);
-    const captions = CaptionCore.parseJson3Events(json?.events || []);
-    return captions.length ? { captions, sourceUrl: target } : null;
+    const isAsr = kind === "asr" || new URL(target).searchParams.get("kind") === "asr";
+    const captions = CaptionCore.parseJson3Events(json?.events || [], { isAsr });
+    return captions.length ? { captions, sourceUrl: target, kind: isAsr ? "asr" : null } : null;
   }
 
   async function fetchYouTubeCaptions(videoId, targetLanguage, signal) {
     try {
       const intercepted = await fetchCCViaIntercept(videoId, signal);
       if (intercepted?.url) {
-        const result = await fetchJson3(intercepted.url, signal);
+        const result = await fetchJson3(intercepted.url, signal, intercepted.kind);
         if (result) {
           return {
             ...result,
             lang: intercepted.lang,
-            kind: intercepted.kind,
+            kind: intercepted.kind || result.kind,
             source: "intercept"
           };
         }
@@ -201,12 +202,12 @@
     const picked = pickCaptionTrack(tracks, targetLanguage);
     if (picked?.baseUrl) {
       try {
-        const result = await fetchJson3(picked.baseUrl, signal);
+        const result = await fetchJson3(picked.baseUrl, signal, picked.kind);
         if (result) {
           return {
             ...result,
             lang: picked.languageCode,
-            kind: picked.kind || null,
+            kind: picked.kind || result.kind,
             source: "player-response"
           };
         }
@@ -488,7 +489,9 @@
       return { ok: false, error: message };
     }
 
-    const sentences = CaptionCore.regroupToSentences(result.captions);
+    const sentences = result.kind === "asr"
+      ? result.captions
+      : CaptionCore.regroupToSentences(result.captions);
     current.sentences = sentences;
     current.translations = new Array(sentences.length);
     current.source = result.source;
