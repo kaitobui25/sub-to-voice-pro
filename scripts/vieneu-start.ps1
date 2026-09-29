@@ -31,7 +31,7 @@ $env:VIENEU_MAX_STREAMS = "1"
 $env:HOST = "127.0.0.1"
 $env:PORT = "8000"
 
-$process = Start-Process -FilePath "uv" -ArgumentList @("run", "python", "-m", "apps.openai_speech") -WorkingDirectory $repo -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+$process = Start-Process -FilePath "uv" -ArgumentList @("run", "python", "-m", "apps.openai_speech") -WorkingDirectory $repo -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
 $process.Id | Set-Content -LiteralPath (Join-Path $artifactDir "vieneu-server.pid")
 Write-Output "VieNeu-TTS starting on http://127.0.0.1:8000 (launcher PID $($process.Id))."
 Write-Output "Check readiness with: npm run vieneu:health"

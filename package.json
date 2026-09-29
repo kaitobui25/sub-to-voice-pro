@@ -10,6 +10,7 @@
     "smoke:tts": "node scripts/smoke-tts.mjs",
     "smoke:gemini-tts": "node scripts/smoke-gemini-tts.mjs",
     "vieneu:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/vieneu-start.ps1",
+    "vieneu:install-host": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/vieneu-install-host.ps1",
     "vieneu:health": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/vieneu-health.ps1",
     "vieneu:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/vieneu-stop.ps1"
   }

@@ -72,6 +72,7 @@ async function translateWithConfiguredProvider(message, signal) {
 async function synthesizeWithConfiguredProvider(message, signal) {
   const config = await loadRuntimeConfig();
   const tts = config.tts || {};
+  await SubToVoiceProviderRuntime.ensureTTSReady(config.tts);
   const manager = SubToVoiceProviderRuntime.createTTSManager(tts);
   return manager.synthesize({
     text: message.text,
@@ -209,6 +210,7 @@ async function startInTab(tab) {
     errorMessage: ""
   };
   await setActionState("loading", false);
+  await SubToVoiceProviderRuntime.ensureTTSReady((await loadRuntimeConfig()).tts);
   await ensureContentScript(tab.id);
 
   const reply = await chrome.tabs.sendMessage(tab.id, { type: "CONTENT_START" });

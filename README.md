@@ -42,7 +42,11 @@ The Windows CPU/ONNX install lives outside this extension repo at:
 
     ..\tools\VieNeu-TTS
 
-Start, inspect, and stop the local server:
+On Windows, install the native startup helper once using the ID shown at `chrome://extensions`:
+
+    npm run vieneu:install-host -- <extension-id>
+
+Reload the extension after installation. With `TTS_PROVIDER=vieneu`, clicking the extension starts VieNeu automatically if it is stopped and waits for `/health` before dubbing. The helper is registered for that extension ID; repeat installation if Chrome assigns a new ID. Manual server controls remain available:
 
     npm run vieneu:start
     npm run vieneu:health
