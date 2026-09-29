@@ -191,7 +191,12 @@ async function ensureContentScript(tabId) {
 
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["lib/caption-core.js", "lib/provider-client.js", "content.js"]
+    files: [
+      "lib/caption-core.js",
+      "lib/audio-scheduler.js",
+      "lib/provider-client.js",
+      "content.js"
+    ]
   });
   await chrome.scripting.insertCSS({
     target: { tabId },

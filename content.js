@@ -8,6 +8,11 @@
   if (!CaptionCore) throw new Error("Sub-to-Voice caption core did not load.");
   const ProviderClient = globalThis.SubToVoiceProviderClient;
   if (!ProviderClient) throw new Error("Sub-to-Voice provider client did not load.");
+  const AudioScheduler = globalThis.SubToVoiceAudioScheduler;
+  if (!AudioScheduler) throw new Error("Sub-to-Voice audio scheduler did not load.");
+
+  const SUBFIRST_RENDER_CONCURRENCY = 5;
+  const VOICE_GAIN_MAX = 2;
 
   const YT_CC_BUTTON_SELECTORS = [
     "button.ytp-subtitles-button",
@@ -260,24 +265,133 @@
     chrome.runtime.sendMessage({ type: "CONTENT_STATE", ...partial }).catch(() => {});
   }
 
-  async function startCaptionSession() {
-    stopCaptionSession("restart", false);
+  function computeGain(voiceVolume) {
+    return voiceVolume === 0 ? 0 : ((voiceVolume ?? 100) / 100) * VOICE_GAIN_MAX;
+  }
+
+  function applyVolumes(current) {
+    const originalVolume = Math.max(0, Math.min(1, (current.settings.originalVolume ?? 18) / 100));
+    current.video.volume = originalVolume;
+    current.video.muted = originalVolume === 0;
+    current.outputGain.gain.value = computeGain(current.settings.voiceVolume ?? 100);
+  }
+
+  async function translateBatch(current, startIdx, endIdx) {
+    if (current !== session || current.stopFlag || startIdx >= endIdx) return;
+    const slice = current.sentences.slice(startIdx, endIdx);
+    const lines = await ProviderClient.translateBatch({
+      lines: slice.map((sentence) => sentence.text),
+      sourceLanguage: current.settings.sourceLanguage || "auto",
+      targetLanguage: current.settings.targetLanguage || "vi",
+      signal: current.abortController.signal
+    });
+    if (current !== session || current.stopFlag) return;
+    for (let index = 0; index < lines.length; index += 1) {
+      current.translations[startIdx + index] = lines[index];
+    }
+  }
+
+  async function renderWaveTTS(current, startIdx, endIdx) {
+    const queue = [];
+    for (let index = startIdx; index < endIdx; index += 1) {
+      if (!current.sentences[index]?._buffer && current.translations[index]) {
+        queue.push(index);
+      }
+    }
+
+    let cursor = 0;
+    const workers = Array.from(
+      { length: Math.min(SUBFIRST_RENDER_CONCURRENCY, queue.length) },
+      async () => {
+        while (cursor < queue.length) {
+          if (current !== session || current.stopFlag) return;
+          const index = queue[cursor++];
+          const result = await ProviderClient.synthesize({
+            text: current.translations[index],
+            voice: current.settings.voice,
+            speed: current.settings.speed,
+            signal: current.abortController.signal
+          });
+          if (current !== session || current.stopFlag) return;
+          current.sentences[index]._buffer = await AudioScheduler.decodeCompleteAudio(
+            current.audioCtx,
+            result.audio
+          );
+        }
+      }
+    );
+    await Promise.all(workers);
+  }
+
+  function updateLiveDisplay(current) {
+    if (current !== session) return;
+    const now = current.video.currentTime;
+    const index = current.sentences.findIndex(
+      (sentence) => sentence.start <= now && sentence.end >= now
+    );
+    if (index === -1) return;
+    const translated = current.translations[index];
+    const source = current.sentences[index].text;
+    setProbe(
+      "Translating · " + Math.round(now) + "s",
+      source + (translated ? "\n→ " + translated : "")
+    );
+  }
+
+  async function runRollingRenderer(current) {
+    while (current === session && !current.stopFlag) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (current !== session || current.stopFlag) return;
+
+      const videoTime = current.video.currentTime;
+      const horizon = videoTime + (AudioScheduler.LOOKAHEAD_MS / 1000);
+      let targetIdx = current.sentences.findIndex((sentence) => sentence.start > horizon);
+      if (targetIdx === -1) targetIdx = current.sentences.length;
+      if (targetIdx <= current.renderCursor) {
+        updateLiveDisplay(current);
+        continue;
+      }
+
+      const start = current.renderCursor;
+      const end = targetIdx;
+      try {
+        const firstUntranslated = current.translations.findIndex(
+          (value, index) => index >= start && index < end && !value
+        );
+        if (firstUntranslated !== -1) {
+          await translateBatch(current, firstUntranslated, end);
+        }
+        if (current !== session || current.stopFlag) return;
+        await renderWaveTTS(current, start, end);
+        if (current !== session || current.stopFlag) return;
+        AudioScheduler.scheduleWindow(current, start, end);
+        current.renderCursor = end;
+        updateLiveDisplay(current);
+      } catch (error) {
+        if (current !== session || current.stopFlag) return;
+        setProbe("Background render retrying", error?.message || String(error));
+      }
+    }
+  }
+
+  function firstWaveBounds(sentences, currentTime) {
+    let start = sentences.findIndex((sentence) => sentence.start >= currentTime);
+    if (start === -1) start = sentences.length;
+    const horizon = currentTime + (AudioScheduler.LOOKAHEAD_MS / 1000);
+    let lookaheadEnd = sentences.findIndex((sentence) => sentence.start > horizon);
+    if (lookaheadEnd === -1) lookaheadEnd = sentences.length;
+    let end = Math.min(lookaheadEnd, start + 2);
+    if (end <= start && start < sentences.length) end = start + 1;
+    return { start, end };
+  }
+
+  async function startSubtitleFirstSession() {
+    stopSession("restart", false);
     const video = findVideo();
     if (!video) return { ok: false, error: "No video on this page." };
 
     const videoId = getYouTubeVideoId();
     if (!videoId) return { ok: false, error: "Could not detect YouTube video id." };
-
-    const abortController = new AbortController();
-    const current = {
-      video,
-      videoId,
-      abortController,
-      sentences: [],
-      source: null
-    };
-    session = current;
-    setProbe("Loading captions…");
 
     let settings = null;
     try {
@@ -289,6 +403,45 @@
       emitState({ running: false, status: "Configuration error", errorMessage: message });
       return { ok: false, error: message };
     }
+
+    let audioCtx;
+    let outputGain;
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") await audioCtx.resume().catch(() => {});
+      outputGain = audioCtx.createGain();
+      outputGain.gain.value = computeGain(settings.voiceVolume ?? 100);
+      outputGain.connect(audioCtx.destination);
+    } catch (error) {
+      const message = "AudioContext unavailable: " + (error?.message || String(error));
+      setProbe(message);
+      return { ok: false, error: message };
+    }
+
+    const abortController = new AbortController();
+    const current = {
+      video,
+      videoId,
+      settings,
+      audioCtx,
+      outputGain,
+      abortController,
+      sentences: [],
+      translations: [],
+      pendingSources: [],
+      scheduledSentenceIndexes: new Set(),
+      audioOffset: 0,
+      renderCursor: 0,
+      stopFlag: false,
+      source: null,
+      wasPlaying: !video.paused,
+      originalVolume: video.volume,
+      originalMuted: video.muted,
+      _onEnded: null
+    };
+    session = current;
+    setProbe("Loading captions…");
+    try { video.pause(); } catch {}
 
     let result = null;
     try {
@@ -302,11 +455,16 @@
     }
 
     if (session !== current || abortController.signal.aborted) {
+      try { audioCtx.close(); } catch {}
       return { ok: false, error: "Cancelled." };
     }
 
     if (!result?.captions?.length) {
       session = null;
+      try { audioCtx.close(); } catch {}
+      if (current.wasPlaying) {
+        try { await video.play(); } catch {}
+      }
       const message = "This phase requires a YouTube caption track.";
       setProbe(message);
       emitState({ running: false, status: "No captions", errorMessage: message });
@@ -315,53 +473,83 @@
 
     const sentences = CaptionCore.regroupToSentences(result.captions);
     current.sentences = sentences;
+    current.translations = new Array(sentences.length);
     current.source = result.source;
-
-    let forwardIndex = sentences.findIndex((sentence) => sentence.end >= video.currentTime);
-    if (forwardIndex === -1) forwardIndex = sentences.length;
-    const forwardSample = sentences.slice(forwardIndex, forwardIndex + 2);
-    let translations = [];
-    if (forwardSample.length) {
-      try {
-        translations = await ProviderClient.translateBatch({
-          lines: forwardSample.map((sentence) => sentence.text),
-          sourceLanguage: settings.sourceLanguage || "auto",
-          targetLanguage: settings.targetLanguage || "vi",
-          signal: abortController.signal
-        });
-      } catch (error) {
-        if (session !== current || abortController.signal.aborted) {
-          return { ok: false, error: "Cancelled." };
-        }
-        session = null;
-        const message = error?.message || String(error);
-        setProbe("Translation failed", message);
-        emitState({ running: false, status: "Translation failed", errorMessage: message });
-        return { ok: false, error: message };
+    const firstWave = firstWaveBounds(sentences, video.currentTime);
+    if (firstWave.start >= firstWave.end) {
+      session = null;
+      try { audioCtx.close(); } catch {}
+      if (current.wasPlaying) {
+        try { await video.play(); } catch {}
       }
+      const message = "No forward captions remain at this playhead.";
+      setProbe(message);
+      return { ok: false, error: message };
     }
 
-    const sample = forwardSample
-      .map((sentence, index) =>
-        sentence.start.toFixed(2) + "s  " + sentence.text +
-        (translations[index] ? "\n→ " + translations[index] : "")
-      )
-      .join("\n\n");
-    const status = "Translation ready: " + translations.length + " lines · " + result.source;
-    setProbe(status, sample);
-    emitState({ running: true, status, errorMessage: "" });
-    return { ok: true, status, count: sentences.length, forwardIndex };
+    try {
+      setProbe("Translating first wave…");
+      await translateBatch(current, firstWave.start, firstWave.end);
+      if (current !== session || current.stopFlag) return { ok: false, error: "Cancelled." };
+      setProbe("Preparing voices…");
+      await renderWaveTTS(current, firstWave.start, firstWave.end);
+    } catch (error) {
+      if (current !== session || current.stopFlag || abortController.signal.aborted) {
+        return { ok: false, error: "Cancelled." };
+      }
+      session = null;
+      try { audioCtx.close(); } catch {}
+      video.volume = current.originalVolume;
+      video.muted = current.originalMuted;
+      if (current.wasPlaying) {
+        try { await video.play(); } catch {}
+      }
+      const message = error?.message || String(error);
+      setProbe("Dub startup failed", message);
+      emitState({ running: false, status: "Dub startup failed", errorMessage: message });
+      return { ok: false, error: message };
+    }
+
+    current.audioOffset = AudioScheduler.computeAudioOffset(
+      audioCtx.currentTime,
+      video.currentTime
+    );
+    AudioScheduler.scheduleWindow(current, firstWave.start, firstWave.end);
+    current.renderCursor = firstWave.end;
+    applyVolumes(current);
+
+    const onEnded = () => {
+      stopSession("Video ended.");
+    };
+    current._onEnded = onEnded;
+    video.addEventListener("ended", onEnded);
+
+    if (current.wasPlaying) {
+      try { await video.play(); } catch {}
+    }
+    setProbe("Translating");
+    emitState({ running: true, status: "Translating", errorMessage: "" });
+    void runRollingRenderer(current);
+    return { ok: true, status: "Translating", count: sentences.length };
   }
 
-  function stopCaptionSession(reason, remove) {
+  function stopSession(reason, remove) {
     const stopReason = reason || "Stopped";
     const shouldRemove = remove !== false;
-    if (session?.abortController) {
-      try {
-        session.abortController.abort();
-      } catch {
-        // No-op.
+    const current = session;
+    if (current) {
+      current.stopFlag = true;
+      try { current.abortController.abort(); } catch {}
+      AudioScheduler.cancelPendingSources(current);
+      if (current._onEnded) {
+        try { current.video.removeEventListener("ended", current._onEnded); } catch {}
       }
+      try { current.outputGain.disconnect(); } catch {}
+      try { current.audioCtx.close(); } catch {}
+      try {
+        current.video.volume = current.originalVolume;
+        current.video.muted = current.originalMuted;
+      } catch {}
     }
     session = null;
     if (shouldRemove) removeProbe();
@@ -373,7 +561,7 @@
   setInterval(() => {
     if (location.href === lastUrl) return;
     lastUrl = location.href;
-    if (session) stopCaptionSession("YouTube navigated.");
+    if (session) stopSession("YouTube navigated.");
   }, 500);
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -383,10 +571,10 @@
           sendResponse({ ok: true, version: "0.1.0" });
           break;
         case "CONTENT_START":
-          sendResponse(await startCaptionSession());
+          sendResponse(await startSubtitleFirstSession());
           break;
         case "CONTENT_STOP":
-          stopCaptionSession();
+          stopSession();
           sendResponse({ ok: true });
           break;
         default:

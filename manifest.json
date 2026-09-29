@@ -21,7 +21,12 @@
   "content_scripts": [
     {
       "matches": ["https://*.youtube.com/*", "https://youtube.com/*"],
-      "js": ["lib/caption-core.js", "lib/provider-client.js", "content.js"],
+      "js": [
+        "lib/caption-core.js",
+        "lib/audio-scheduler.js",
+        "lib/provider-client.js",
+        "content.js"
+      ],
       "css": ["content.css"],
       "run_at": "document_idle"
     }
