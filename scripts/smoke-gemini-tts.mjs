@@ -21,7 +21,7 @@ if (tts.provider !== "gemini") {
 const provider = createGeminiTTSProvider({
   apiKey: tts.apiKey,
   baseUrl: tts.baseUrl,
-  model: tts.model,
+  models: tts.models,
   voice: tts.voice
 });
 
@@ -43,5 +43,5 @@ if (!riff || !wave) {
 
 console.log(
   "Gemini TTS smoke passed: " + result.audio.byteLength +
-  " bytes (" + result.mimeType + ") using configured model " + tts.model + "."
+  " bytes (" + result.mimeType + ") using model " + result.model + "."
 );

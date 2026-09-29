@@ -81,7 +81,7 @@ test("Gemini TTS adapter uses configured model, voice and Interactions audio sch
   const provider = createGeminiTTSProvider({
     apiKey: "test-key",
     baseUrl: "https://example.test/v1beta/",
-    model: "models/speech-model-from-config",
+    models: ["models/speech-model-from-config", "speech-fallback"],
     voice: "Kore",
     fetchImpl: async (url, options) => {
       requests.push({ url, options });
@@ -114,13 +114,81 @@ test("Gemini TTS adapter uses configured model, voice and Interactions audio sch
   assert.deepEqual(body.generation_config.speech_config, [{ voice: "Kore" }]);
   assert.equal(result.mimeType, "audio/wav");
   assert.equal(result.audio.byteLength, 44);
+  assert.equal(result.model, "speech-model-from-config");
+});
+
+test("Gemini TTS adapter falls back to the next configured model only on 429", async () => {
+  const modelsSeen = [];
+  const wav = new Uint8Array(makeWavBuffer());
+  const provider = createGeminiTTSProvider({
+    apiKey: "test-key",
+    baseUrl: "https://example.test/v1beta",
+    models: ["models/lite-model", "models/flash-model"],
+    voice: "Kore",
+    fetchImpl: async (_url, options) => {
+      const model = JSON.parse(options.body).model;
+      modelsSeen.push(model);
+      if (model === "lite-model") {
+        return {
+          ok: false,
+          status: 429,
+          async text() {
+            return JSON.stringify({ error: { message: "rate limited" } });
+          }
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            steps: [{
+              content: [{
+                type: "audio",
+                data: Buffer.from(wav).toString("base64"),
+                mime_type: "audio/wav"
+              }]
+            }]
+          };
+        }
+      };
+    }
+  });
+
+  const result = await provider.synthesize({ text: "Xin chào", speed: 1 });
+  assert.deepEqual(modelsSeen, ["lite-model", "flash-model"]);
+  assert.equal(result.model, "flash-model");
+  assert.equal(result.audio.byteLength, 44);
+});
+
+test("Gemini TTS adapter does not fall back on non-429 provider errors", async () => {
+  const modelsSeen = [];
+  const provider = createGeminiTTSProvider({
+    apiKey: "test-key",
+    baseUrl: "https://example.test/v1beta",
+    models: ["lite-model", "flash-model"],
+    voice: "Kore",
+    fetchImpl: async (_url, options) => {
+      modelsSeen.push(JSON.parse(options.body).model);
+      return {
+        ok: false,
+        status: 401,
+        async text() {
+          return JSON.stringify({ error: { message: "invalid credentials" } });
+        }
+      };
+    }
+  });
+
+  await assert.rejects(provider.synthesize({ text: "hello", speed: 1 }), /401/);
+  assert.deepEqual(modelsSeen, ["lite-model"]);
 });
 
 test("Gemini TTS adapter rejects unsupported numeric speed without silently changing speech", async () => {
   const provider = createGeminiTTSProvider({
     apiKey: "test-key",
     baseUrl: "https://example.test/v1beta",
-    model: "speech-model",
+    models: ["speech-model"],
     voice: "Kore",
     fetchImpl: async () => { throw new Error("must not call"); }
   });
@@ -131,7 +199,7 @@ test("Gemini TTS adapter reports provider errors without exposing key", async ()
   const provider = createGeminiTTSProvider({
     apiKey: "super-secret-key",
     baseUrl: "https://example.test/v1beta",
-    model: "speech-model",
+    models: ["speech-model"],
     voice: "Kore",
     fetchImpl: async () => ({
       ok: false,

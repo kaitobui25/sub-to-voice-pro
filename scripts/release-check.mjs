@@ -125,17 +125,25 @@ for (const relativePath of coreFiles) {
 
 const configText = read("config.yaml");
 const ttsSection = configText.split(/^tts:\s*$/m)[1]?.split(/^[A-Za-z_][\w-]*:\s*$/m)[0] || "";
-const configuredTTSModel = ttsSection.match(/^\s+model:\s*(\S+)\s*$/m)?.[1];
-if (!configuredTTSModel) fail("config.yaml must define tts.model.");
+const ttsModelsBlock = ttsSection.match(
+  /^\s{2}models:\s*\r?\n((?:\s{4}-\s+\S+\s*(?:\r?\n|$))+)/m
+)?.[1] || "";
+const configuredTTSModels = ttsModelsBlock
+  .split(/\r?\n/)
+  .map((line) => line.match(/^\s{4}-\s+(\S+)\s*$/)?.[1])
+  .filter(Boolean);
+if (!configuredTTSModels.length) fail("config.yaml must define at least one tts.models entry.");
 const sourceFiles = git(["ls-files"])
   .split(/\r?\n/)
   .filter((relativePath) =>
     /\.(?:js|mjs)$/.test(relativePath) &&
     fs.existsSync(path.join(root, relativePath))
   );
-for (const relativePath of sourceFiles) {
-  if (read(relativePath).includes(configuredTTSModel)) {
-    fail("Configured TTS model is hard-coded in source: " + relativePath);
+for (const configuredTTSModel of configuredTTSModels) {
+  for (const relativePath of sourceFiles) {
+    if (read(relativePath).includes(configuredTTSModel)) {
+      fail("Configured TTS model is hard-coded in source: " + relativePath);
+    }
   }
 }
 

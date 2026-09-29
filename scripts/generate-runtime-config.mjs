@@ -92,7 +92,7 @@ const runtimeConfig = {
   tts: {
     provider: config.tts?.provider || "gemini",
     baseUrl: config.tts?.base_url,
-    model: config.tts?.model,
+    models: config.tts?.models || [],
     voice: config.tts?.voice,
     speed: config.tts?.speed == null ? 1 : config.tts.speed,
     apiKey: env.GEMINI_API_KEY

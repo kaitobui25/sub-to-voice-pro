@@ -20,7 +20,7 @@ test("provider runtime builds configured translation and TTS managers", () => {
     provider: "gemini",
     apiKey: "test-key",
     baseUrl: "https://example.test/v1beta",
-    model: "speech-test",
+    models: ["speech-test", "speech-fallback"],
     voice: "voice-test"
   });
 

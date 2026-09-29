@@ -18,7 +18,10 @@ translation:
 tts:
   provider: gemini
   base_url: https://generativelanguage.googleapis.com/v1beta
-  model: gemini-3.8-flash-lite-tts
+  # Fallback order. Adapter only moves to the next model on HTTP 429.
+  models:
+    - gemini-3.8-flash-lite-tts
+    - gemini-3.8-flash-tts
   voice: Kore
   speed: 1
 

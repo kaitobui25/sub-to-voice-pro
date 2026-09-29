@@ -10,6 +10,7 @@ Validation date: 2026-09-29.
 - Real Gemini smoke passed with two ordered Vietnamese translations using gemini-2.5-flash.
 - TTS provider contract and Gemini TTS request/response adapter tests pass.
 - Real Gemini TTS smoke passed with one short Vietnamese sentence using the TTS model selected from config; response was 59,826 bytes of audio/wav.
+- Real TTS fallback smoke passed: the configured Flash-Lite model hit HTTP 429, then the adapter switched to the next configured model and returned 73,266 bytes of audio/wav from gemini-3.8-flash-tts.
 - Scheduler tests cover timestamp math, 30-second lookahead, late-cue skip, duplicate prevention, and source cancellation.
 - Provider-message cancellation test proves Abort sends a background cancellation request and ignores a late reply.
 - Session code implements one active session, pause/resume resync, seek cancel/reschedule, Stop cleanup, ended cleanup, and YouTube SPA cleanup.
