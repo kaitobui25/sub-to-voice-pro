@@ -25,6 +25,7 @@
   let session = null;
   let lastUrl = location.href;
   let cachedCaptions = null;
+  let lastTranscript = null;
   let probeResizeObserver = null;
 
   function saveProbeLayout(root) {
@@ -336,6 +337,58 @@
     current.outputGain.gain.value = computeGain(current.settings.voiceVolume ?? 100);
   }
 
+  function recordScheduledAudio(current, scheduled) {
+    for (const item of scheduled || []) {
+      const start = Math.max(0, item.playAt - current.audioOffset);
+      const record = {
+        index: item.index, source: item.source, start,
+        end: start + item.duration, closed: false
+      };
+      current.audioTimings.push(record);
+      current.audioTimingBySource.set(item.source, record);
+    }
+  }
+
+  function closeScheduledAudio(current) {
+    const now = current.video.currentTime;
+    for (const item of current.audioTimings) {
+      if (item.closed) continue;
+      if (!Number.isFinite(now) || now <= item.start) {
+        item.discarded = true;
+      } else {
+        item.end = Math.min(item.end, now);
+      }
+      item.closed = true;
+    }
+  }
+
+  function discardPendingAudio(current) {
+    for (const item of current.audioTimings) {
+      if (!item.closed) {
+        item.closed = true;
+        item.discarded = true;
+      }
+    }
+  }
+
+  function transcriptSnapshot(current) {
+    const now = current.video.currentTime;
+    return {
+      videoId: current.videoId,
+      rows: current.sentences.map((sentence, index) => ({
+        source: sentence.text,
+        audio: current.audioTimings.filter((item) =>
+          item.index === index && !item.discarded &&
+          (item.closed || item.start <= now) && current.translations[index]
+        ).map((item) => ({
+          start: item.start,
+          end: item.closed ? item.end : Math.min(item.end, now),
+          text: current.translations[index]
+        })).filter((item) => item.end > item.start)
+      })).filter((row) => row.audio.length)
+    };
+  }
+
   async function translateBatch(current, startIdx, endIdx) {
     if (current !== session || current.stopFlag || startIdx >= endIdx) return;
     const slice = current.sentences.slice(startIdx, endIdx);
@@ -432,7 +485,7 @@
         if (current !== session || current.stopFlag) return;
         await renderWaveTTS(current, start, end);
         if (current !== session || current.stopFlag) return;
-        AudioScheduler.scheduleWindow(current, start, end);
+        recordScheduledAudio(current, AudioScheduler.scheduleWindow(current, start, end));
         current.renderCursor = end;
         updateLiveDisplay(current);
       } catch (error) {
@@ -459,6 +512,7 @@
 
   async function startSubtitleFirstSession() {
     stopSession("restart", false);
+    lastTranscript = null;
     const video = findVideo();
     if (!video) return { ok: false, error: "No video on this page." };
 
@@ -500,6 +554,8 @@
       abortController,
       sentences: [],
       translations: [],
+      audioTimings: [],
+      audioTimingBySource: new WeakMap(),
       pendingSources: [],
       scheduledSentenceIndexes: new Set(),
       audioOffset: 0,
@@ -595,13 +651,18 @@
       audioCtx.currentTime,
       video.currentTime
     );
-    AudioScheduler.scheduleWindow(current, firstWave.start, firstWave.end);
+    current.onAudioEnded = (source) => {
+      const record = current.audioTimingBySource.get(source);
+      if (record) record.closed = true;
+    };
+    recordScheduledAudio(current, AudioScheduler.scheduleWindow(current, firstWave.start, firstWave.end));
     current.renderCursor = firstWave.end;
     applyVolumes(current);
 
     const onPause = () => {
       if (current !== session || current.stopFlag) return;
       current.paused = true;
+      closeScheduledAudio(current);
       AudioScheduler.cancelPendingSources(current);
       void current.audioCtx.suspend().catch(() => {});
       setProbe("Paused");
@@ -610,6 +671,7 @@
     const onPlay = async () => {
       if (current !== session || current.stopFlag) return;
       current.paused = false;
+      discardPendingAudio(current);
       AudioScheduler.cancelPendingSources(current);
       await current.audioCtx.resume().catch(() => {});
       if (current !== session || current.stopFlag) return;
@@ -618,18 +680,21 @@
         current.video.currentTime
       );
       const window = AudioScheduler.scheduleAroundPlayhead(current, current.video);
+      recordScheduledAudio(current, window.scheduled);
       if (window.start < current.renderCursor) current.renderCursor = window.start;
       updateLiveDisplay(current);
       emitState({ running: true, paused: false, status: "Translating", errorMessage: "" });
     };
     const onSeeked = () => {
       if (current !== session || current.stopFlag) return;
+      discardPendingAudio(current);
       AudioScheduler.cancelPendingSources(current);
       current.audioOffset = AudioScheduler.computeAudioOffset(
         current.audioCtx.currentTime,
         current.video.currentTime
       );
       const window = AudioScheduler.scheduleAroundPlayhead(current, current.video);
+      recordScheduledAudio(current, window.scheduled);
       if (window.start < current.renderCursor) current.renderCursor = window.start;
       updateLiveDisplay(current);
     };
@@ -660,6 +725,8 @@
     const shouldRemove = remove !== false;
     const current = session;
     if (current) {
+      closeScheduledAudio(current);
+      lastTranscript = transcriptSnapshot(current);
       current.stopFlag = true;
       try { current.abortController.abort(); } catch {}
       AudioScheduler.cancelPendingSources(current);
@@ -718,6 +785,9 @@
             applyVolumes(session);
           }
           sendResponse({ ok: true });
+          break;
+        case "CONTENT_GET_TRANSCRIPT":
+          sendResponse({ ok: true, transcript: session ? transcriptSnapshot(session) : lastTranscript });
           break;
         default:
           sendResponse({ ok: false, error: "Unknown content message: " + message?.type });

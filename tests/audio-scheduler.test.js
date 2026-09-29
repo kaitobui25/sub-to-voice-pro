@@ -73,6 +73,19 @@ test("scheduleWindow does not schedule one sentence twice", () => {
   assert.equal(audioCtx.created.length, 1);
 });
 
+test("scheduleWindow exposes the actual audio start and decoded duration", () => {
+  const audioCtx = fakeAudioContext(5);
+  const session = {
+    audioCtx, outputGain: {}, audioOffset: 0,
+    sentences: [{ start: 5, end: 6, _buffer: { duration: 1.25 } }],
+    pendingSources: []
+  };
+  const [item] = scheduleWindow(session, 0, 1);
+  assert.equal(item.playAt, 5.02);
+  assert.equal(item.duration, 1.25);
+  assert.equal(item.source.startAt, item.playAt);
+});
+
 test("cancelPendingSources stops, disconnects and clears scheduling state", () => {
   const audioCtx = fakeAudioContext(1);
   const session = {

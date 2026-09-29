@@ -330,6 +330,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (!sender.tab && message?.type === "GET_TRANSCRIPT") {
+    (async () => {
+      const tabId = Number(message.tabId);
+      if (!Number.isInteger(tabId)) throw new Error("Open a YouTube video first.");
+      const tab = await chrome.tabs.get(tabId);
+      if (!isYouTubeWatchUrl(tab?.url)) throw new Error("Open a YouTube video first.");
+      const reply = await chrome.tabs.sendMessage(tabId, { type: "CONTENT_GET_TRANSCRIPT" });
+      sendResponse(reply?.ok ? reply : { ok: false, error: reply?.error || "No transcript is available yet." });
+    })().catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
   if (!sender.tab && message?.type === "SET_ENABLED") {
     (async () => {
       const tabId = Number(message.tabId);

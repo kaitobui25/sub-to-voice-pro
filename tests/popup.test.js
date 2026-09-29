@@ -8,7 +8,7 @@ const vm = require("node:vm");
 
 test("popup switch controls dubbing while volume is saved separately", async () => {
   const elements = new Map();
-  for (const id of ["enabled", "original-volume", "volume-value", "status"]) {
+  for (const id of ["enabled", "original-volume", "volume-value", "status", "download-transcript"]) {
     elements.set(id, { checked: false, disabled: true, value: "", textContent: "", handlers: {},
       addEventListener(type, handler) { this.handlers[type] = handler; } });
   }

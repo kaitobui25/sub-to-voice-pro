@@ -4,6 +4,7 @@ const enabled = document.getElementById("enabled");
 const volume = document.getElementById("original-volume");
 const volumeValue = document.getElementById("volume-value");
 const status = document.getElementById("status");
+const downloadTranscript = document.getElementById("download-transcript");
 let tabId = null;
 let volumeTimer = null;
 let pendingVolume = Promise.resolve();
@@ -29,6 +30,7 @@ async function initialize() {
     volume.value = state.originalVolume;
     volumeValue.value = state.originalVolume + "%";
     volume.disabled = false;
+    downloadTranscript.disabled = !state.canStart;
   } catch (error) {
     showError(error);
   }
@@ -83,6 +85,28 @@ volume.addEventListener("input", () => {
 volume.addEventListener("change", () => {
   clearTimeout(volumeTimer);
   void saveVolume();
+});
+
+downloadTranscript.addEventListener("click", async () => {
+  downloadTranscript.disabled = true;
+  try {
+    const reply = await request({ type: "GET_TRANSCRIPT", tabId });
+    const transcript = reply.transcript;
+    if (!transcript?.rows?.length) throw new Error("Chưa có đoạn voice đã phát để tải.");
+    const content = SubToVoiceTranscriptExport.format(transcript);
+    const url = URL.createObjectURL(new Blob(["\uFEFF", content], { type: "text/plain;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `sub-to-voice-${transcript.videoId || "transcript"}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    showError(error);
+  } finally {
+    downloadTranscript.disabled = false;
+  }
 });
 
 chrome.runtime.onMessage.addListener((message) => {
