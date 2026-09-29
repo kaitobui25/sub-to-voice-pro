@@ -8,6 +8,8 @@ Validation date: 2026-09-29.
 - Caption parse/regroup/dedupe deterministic tests pass.
 - Translation batch size is 10; order and output count are validated.
 - Real Gemini smoke passed with two ordered Vietnamese translations using gemini-2.5-flash.
+- Gemini translation fallback tests cover HTTP 429 model switching, Retry-After cooldown persistence across provider instances, all-models-cooling behavior, and non-429 no-fallback behavior.
+- Real Gemini translation smoke passed after enabling the configured multi-model fallback chain; two short lines returned ordered Vietnamese output.
 - TTS provider contract and Gemini TTS request/response adapter tests pass.
 - Real Gemini TTS smoke passed with one short Vietnamese sentence using the TTS model selected from config; response was 59,826 bytes of audio/wav.
 - Real TTS fallback smoke passed: the configured Flash-Lite model hit HTTP 429, then the adapter switched to the next configured model and returned 73,266 bytes of audio/wav from gemini-3.8-flash-tts.

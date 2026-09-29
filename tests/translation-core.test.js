@@ -8,7 +8,14 @@ const {
   TranslationManager,
   buildDubbingPrompt
 } = require("../lib/translation-core.js");
-const { createGeminiProvider } = require("../lib/providers/gemini.js");
+const {
+  createGeminiProvider,
+  _resetModelStateForTests
+} = require("../lib/providers/gemini.js");
+
+test.beforeEach(() => {
+  _resetModelStateForTests();
+});
 
 function makeManager(provider) {
   const registry = new TranslationProviderRegistry();
@@ -186,4 +193,132 @@ test("Gemini adapter rejects response JSON without a lines array", async () => {
     provider.translateBatch({ prompt: "PROMPT" }),
     /must contain a lines array/
   );
+});
+
+test("Gemini adapter falls back to the next configured translation model on 429", async () => {
+  const modelsSeen = [];
+  const provider = createGeminiProvider({
+    baseUrl: "https://example.test/v1beta",
+    apiKey: "test-secret",
+    models: ["models/primary-model", "fallback-model"],
+    fetchImpl: async (url) => {
+      const model = decodeURIComponent(url.match(/\/models\/([^:]+):generateContent$/)[1]);
+      modelsSeen.push(model);
+      if (model === "primary-model") {
+        return {
+          ok: false,
+          status: 429,
+          headers: { get: () => null },
+          async text() {
+            return JSON.stringify({
+              error: { message: "Rate limit exceeded. Please retry in 13.8s." }
+            });
+          }
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            candidates: [{ content: { parts: [{ text: '{"lines":["Xin chao"]}' }] } }]
+          };
+        }
+      };
+    }
+  });
+
+  const output = await provider.translateBatch({ prompt: "PROMPT" });
+  assert.deepEqual(output, ["Xin chao"]);
+  assert.deepEqual(modelsSeen, ["primary-model", "fallback-model"]);
+});
+
+test("Gemini adapter remembers translation model cooldown across provider instances", async () => {
+  const modelsSeen = [];
+  const options = {
+    baseUrl: "https://cooldown.test/v1beta",
+    apiKey: "test-secret",
+    models: ["primary-model", "fallback-model"],
+    fetchImpl: async (url) => {
+      const model = decodeURIComponent(url.match(/\/models\/([^:]+):generateContent$/)[1]);
+      modelsSeen.push(model);
+      if (model === "primary-model") {
+        return {
+          ok: false,
+          status: 429,
+          headers: { get: () => "30" },
+          async text() { return "rate limited"; }
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            candidates: [{ content: { parts: [{ text: '{"lines":["ok"]}' }] } }]
+          };
+        }
+      };
+    }
+  };
+
+  const first = createGeminiProvider(options);
+  assert.deepEqual(await first.translateBatch({ prompt: "ONE" }), ["ok"]);
+  assert.deepEqual(modelsSeen, ["primary-model", "fallback-model"]);
+
+  const second = createGeminiProvider(options);
+  assert.deepEqual(await second.translateBatch({ prompt: "TWO" }), ["ok"]);
+  assert.deepEqual(modelsSeen, ["primary-model", "fallback-model", "fallback-model"]);
+});
+
+test("Gemini adapter makes no translation request while all configured models are cooling down", async () => {
+  const calls = [];
+  const options = {
+    baseUrl: "https://all-limited.test/v1beta",
+    apiKey: "test-secret",
+    models: ["model-a", "model-b"],
+    fetchImpl: async (url) => {
+      calls.push(url);
+      return {
+        ok: false,
+        status: 429,
+        headers: { get: () => "20" },
+        async text() { return "rate limited"; }
+      };
+    }
+  };
+
+  const first = createGeminiProvider(options);
+  await assert.rejects(first.translateBatch({ prompt: "ONE" }), /rate-limited.*20s/i);
+  assert.equal(calls.length, 2);
+
+  const second = createGeminiProvider({
+    ...options,
+    fetchImpl: async () => {
+      calls.push("unexpected");
+      throw new Error("must not call");
+    }
+  });
+  await assert.rejects(second.translateBatch({ prompt: "TWO" }), /rate-limited.*20s/i);
+  assert.equal(calls.length, 2);
+});
+
+test("Gemini adapter does not switch translation models on non-429 errors", async () => {
+  const modelsSeen = [];
+  const provider = createGeminiProvider({
+    baseUrl: "https://example.test/v1beta",
+    apiKey: "test-secret",
+    models: ["model-a", "model-b"],
+    fetchImpl: async (url) => {
+      modelsSeen.push(url);
+      return {
+        ok: false,
+        status: 400,
+        async text() { return "bad request"; }
+      };
+    }
+  });
+
+  await assert.rejects(provider.translateBatch({ prompt: "PROMPT" }), /HTTP 400/);
+  assert.equal(modelsSeen.length, 1);
 });

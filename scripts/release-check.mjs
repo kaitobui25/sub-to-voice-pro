@@ -128,6 +128,17 @@ function configSection(name) {
   return configText.split(new RegExp("^" + name + ":\\s*$", "m"))[1]
     ?.split(/^[A-Za-z_][\w-]*:\s*$/m)[0] || "";
 }
+const translationSection = configSection("translation");
+const translationModelsBlock = translationSection.match(
+  /^\s{2}models:\s*\r?\n((?:\s{4}-\s+\S+\s*(?:\r?\n|$))+)/m
+)?.[1] || "";
+const configuredTranslationModels = translationModelsBlock
+  .split(/\r?\n/)
+  .map((line) => line.match(/^\s{4}-\s+(\S+)\s*$/)?.[1])
+  .filter(Boolean);
+if (!configuredTranslationModels.length) {
+  fail("config.yaml must define at least one translation.models entry.");
+}
 const geminiTTSSection = configSection("gemini_tts");
 const ttsModelsBlock = geminiTTSSection.match(
   /^\s{2}models:\s*\r?\n((?:\s{4}-\s+\S+\s*(?:\r?\n|$))+)/m
@@ -146,10 +157,10 @@ const sourceFiles = git(["ls-files"])
     /\.(?:js|mjs)$/.test(relativePath) &&
     fs.existsSync(path.join(root, relativePath))
   );
-for (const configuredTTSModel of configuredTTSModels) {
+for (const configuredModel of [...configuredTranslationModels, ...configuredTTSModels]) {
   for (const relativePath of sourceFiles) {
-    if (read(relativePath).includes(configuredTTSModel)) {
-      fail("Configured TTS model is hard-coded in source: " + relativePath);
+    if (read(relativePath).includes(configuredModel)) {
+      fail("Configured provider model is hard-coded in source: " + relativePath);
     }
   }
 }

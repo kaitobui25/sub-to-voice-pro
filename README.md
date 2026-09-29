@@ -14,6 +14,7 @@ The MVP follows the locked Echoly baseline in docs/ECHOLY_BASELINE.md:
 - seek/pause/resume/Stop cleanup with one active session
 
 Translation and TTS are provider-neutral at the core boundary. Translation currently uses Gemini. TTS can use Gemini or a local VieNeu-TTS v3 Turbo server; models, endpoints, voices, and concurrency are selected from config rather than hard-coded in core runtime code.
+Translation models are tried in config order. On HTTP 429, the Gemini adapter records that model's cooldown from Retry-After/provider detail and continues with the next configured text-generation model; later requests skip models still cooling down.
 TTS models are tried in config order; the adapter falls back to the next configured TTS model only when the current model returns HTTP 429.
 After a 429, the adapter remembers that model's cooldown from Retry-After (or the provider error message) and skips it until the cooldown expires, preventing repeated rate-limit calls.
 
