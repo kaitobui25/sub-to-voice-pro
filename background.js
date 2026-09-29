@@ -50,8 +50,10 @@ function publicRuntimeSettings(config) {
     targetLanguage: config.translation?.targetLanguage || "vi",
     originalVolume: config.audio?.originalVolume ?? 18,
     voiceVolume: config.audio?.voiceVolume ?? 100,
+    ttsProvider: config.tts?.provider || null,
     voice: config.tts?.voice || null,
-    speed: config.tts?.speed ?? 1
+    speed: config.tts?.speed ?? 1,
+    ttsConcurrency: Math.max(1, Math.floor(config.tts?.maxConcurrency ?? 5))
   };
 }
 

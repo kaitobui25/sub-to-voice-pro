@@ -79,6 +79,30 @@ const geminiApiKey = env.GEMINI_API_KEY1 || env.GEMINI_API_KEY;
 if (!geminiApiKey) {
   throw new Error("Missing GEMINI_API_KEY1 (or legacy GEMINI_API_KEY).");
 }
+const ttsProvider = (env.TTS_PROVIDER || config.tts?.provider || "gemini").trim().toLowerCase();
+if (!["gemini", "vieneu"].includes(ttsProvider)) {
+  throw new Error("TTS_PROVIDER must be gemini or vieneu.");
+}
+const ttsSpeed = config.tts?.speed == null ? 1 : config.tts.speed;
+const ttsConfig = ttsProvider === "vieneu"
+  ? {
+      provider: "vieneu",
+      baseUrl: config.vieneu_tts?.base_url,
+      model: config.vieneu_tts?.model,
+      voice: config.vieneu_tts?.voice,
+      sampleRate: config.vieneu_tts?.sample_rate,
+      maxConcurrency: config.vieneu_tts?.max_concurrency,
+      speed: ttsSpeed
+    }
+  : {
+      provider: "gemini",
+      baseUrl: config.gemini_tts?.base_url,
+      models: config.gemini_tts?.models || [],
+      voice: config.gemini_tts?.voice,
+      maxConcurrency: config.gemini_tts?.max_concurrency,
+      speed: ttsSpeed,
+      apiKey: geminiApiKey
+    };
 
 const runtimeConfig = {
   translation: {
@@ -89,14 +113,7 @@ const runtimeConfig = {
     targetLanguage: config.translation?.target_language || "vi",
     apiKey: geminiApiKey
   },
-  tts: {
-    provider: config.tts?.provider || "gemini",
-    baseUrl: config.tts?.base_url,
-    models: config.tts?.models || [],
-    voice: config.tts?.voice,
-    speed: config.tts?.speed == null ? 1 : config.tts.speed,
-    apiKey: geminiApiKey
-  },
+  tts: ttsConfig,
   audio: {
     originalVolume: config.audio?.original_volume == null ? 18 : config.audio.original_volume,
     voiceVolume: config.audio?.voice_volume == null ? 100 : config.audio.voice_volume

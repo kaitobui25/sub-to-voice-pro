@@ -12,6 +12,11 @@ Validation date: 2026-09-29.
 - Real Gemini TTS smoke passed with one short Vietnamese sentence using the TTS model selected from config; response was 59,826 bytes of audio/wav.
 - Real TTS fallback smoke passed: the configured Flash-Lite model hit HTTP 429, then the adapter switched to the next configured model and returned 73,266 bytes of audio/wav from gemini-3.8-flash-tts.
 - Rate-limit cooldown tests pass: Retry-After/error cooldown persists across provider instances, the limited model is skipped on later requests, and no API request is made while all configured TTS models are cooling down.
+- VieNeu-TTS v3 Turbo was installed locally with uv in ../tools/VieNeu-TTS using the CPU/ONNX path.
+- Local VieNeu health check passed on 127.0.0.1:8000: backend onnx, 48 kHz, 25 voices, max_streams=1.
+- Direct local API smoke returned a valid RIFF/WAVE file for one short Vietnamese sentence.
+- The extension VieNeu adapter real smoke passed through runtime-config.local.json and returned a complete WAV using the configured local model/voice.
+- VieNeu adapter tests cover OpenAI-compatible request shape, streaming WAV header repair, unsupported speed behavior, and local API errors.
 - Scheduler tests cover timestamp math, 30-second lookahead, late-cue skip, duplicate prevention, and source cancellation.
 - Provider-message cancellation test proves Abort sends a background cancellation request and ignores a late reply.
 - Session code implements one active session, pause/resume resync, seek cancel/reschedule, Stop cleanup, ended cleanup, and YouTube SPA cleanup.

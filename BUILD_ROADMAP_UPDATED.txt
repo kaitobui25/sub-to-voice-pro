@@ -6,7 +6,7 @@ Build the smallest reliable Chrome extension that preserves Echoly subtitle-firs
 - removing unused modes
 - abstracting Translation providers/models
 - abstracting TTS providers/models
-- using Gemini translation + configurable Gemini TTS as the first real providers
+- using Gemini translation plus selectable Gemini or local VieNeu TTS providers
 - delaying production UI until the core pipeline is proven stable
 
 AGENT_GOAL.txt is the binding design contract.
@@ -29,7 +29,7 @@ REAL API TEST RULE
 Starting at Phase 2, every phase requires a tiny real API smoke test where applicable.
 Keep quota usage minimal:
 - Gemini: 1–2 short lines
-- Gemini TTS: one short Vietnamese sentence
+- configured TTS provider: one short Vietnamese sentence
 - browser tests: only a short video window
 - no aggressive retries
 - stop once behavior is proven
@@ -127,16 +127,16 @@ Translate only a tiny forward sample on a real captioned YouTube video.
 Commit:
   feat: add configurable translation provider layer
 
-PHASE 3 — TTS ABSTRACTION + REAL GEMINI TTS TEST
+PHASE 3 — TTS ABSTRACTION + REAL PROVIDER TEST
 Goal: decouple TTS from provider/model-specific core code.
 
 Tasks:
 - implement TTS Provider interface + TTSManager
-- implement Gemini TTS adapter
+- implement Gemini TTS adapter and local VieNeu-TTS adapter
 - adapter owns endpoint/key/model/voice/request/response parsing
 - core requests complete MP3/WAV
 - returns {audio:ArrayBuffer,mimeType}
-- no Gemini TTS request fields or model IDs in scheduler/core
+- no provider-specific TTS request fields or model IDs in scheduler/core
 
 Local secret:
   GEMINI_API_KEY=<local secret>
@@ -149,7 +149,7 @@ Mock/static:
 - no secrets in repo
 
 REQUIRED REAL API SMOKE TEST:
-Call configured Gemini TTS once with ONE short Vietnamese sentence.
+Call the configured TTS provider once with ONE short Vietnamese sentence.
 Verify auth, model/voice, complete audio bytes, valid/decodable format.
 No quota-burning retries.
 
@@ -163,7 +163,7 @@ Tasks:
 - one AudioContext/session + shared GainNode
 - decode complete provider audio with decodeAudioData()
 - associate AudioBuffer with sentence
-- port renderWaveTTS concurrency=5
+- port renderWaveTTS with provider-configured concurrency (Gemini 5; local VieNeu CPU 1)
 - port scheduleWindow using:
     at = audioOffset + sentence.start
     source.start(at)
@@ -178,7 +178,7 @@ Deterministic tests:
 - avoid duplicate scheduling
 
 REQUIRED REAL API + BROWSER SMOKE TEST:
-Use Gemini translation + configured Gemini TTS for only the first 1–2 needed sentences.
+Use Gemini translation + configured TTS provider for only the first 1–2 needed sentences.
 Verify translation -> TTS -> decode -> audible dub near expected subtitle timestamp.
 Stop immediately after proof.
 Then do one very short rolling-lookahead check with only a few more sentences.
@@ -220,7 +220,7 @@ Goal: prove core product works end-to-end in Chrome.
 Test config:
 - secrets from root .env via dev-only gitignored bridge
 - Gemini translation
-- configurable Gemini TTS
+- configurable Gemini TTS or local VieNeu-TTS v3 Turbo
 - normal non-live YouTube VOD with captions
 - 1x speed
 - short windows only
@@ -292,13 +292,13 @@ Acceptance:
 [ ] captions work
 [ ] regroup/dedupe matches Echoly
 [ ] Gemini real translation smoke test passed
-[ ] Gemini real TTS smoke test passed
+[ ] configured TTS real smoke test passed
 [ ] provider abstractions work
 [ ] audio decodes to AudioBuffer
 [ ] Echoly scheduler preserved
 [ ] first wave=2
 [ ] lookahead=30s
-[ ] TTS concurrency=5
+[ ] TTS concurrency follows provider config
 [ ] pause/resume sync
 [ ] seek cancels/reschedules
 [ ] Stop cleans resources
@@ -337,7 +337,7 @@ Current MVP is:
     Translation provider/model abstraction
     TTS provider/model abstraction
     Gemini adapter for first real translation tests
-    Gemini TTS adapter with model selected from config
+    Gemini TTS and local VieNeu adapters with model/voice selected from config
     root .env for local secrets
     tiny real API smoke tests from Phase 2 onward
     correct pause/resume dub synchronization

@@ -67,7 +67,7 @@ if (permissions.has("activeTab")) {
 }
 
 const example = parseEnv(read(".env.example"));
-for (const key of ["GEMINI_API_KEY1", "GEMINI_API_KEY"]) {
+for (const key of ["GEMINI_API_KEY1", "GEMINI_API_KEY", "TTS_PROVIDER"]) {
   if (!(key in example)) fail(".env.example is missing " + key);
   if (example[key]) fail(".env.example must keep " + key + " blank.");
 }
@@ -109,7 +109,7 @@ const coreFiles = [
   "lib/translation-core.js",
   "lib/tts-core.js"
 ];
-const providerNames = /\bgemini\b/i;
+const providerNames = /\b(?:gemini|vieneu)\b/i;
 for (const relativePath of coreFiles) {
   if (providerNames.test(read(relativePath))) {
     fail("Provider-specific name leaked into core runtime file: " + relativePath);
@@ -124,15 +124,22 @@ for (const relativePath of coreFiles) {
 }
 
 const configText = read("config.yaml");
-const ttsSection = configText.split(/^tts:\s*$/m)[1]?.split(/^[A-Za-z_][\w-]*:\s*$/m)[0] || "";
-const ttsModelsBlock = ttsSection.match(
+function configSection(name) {
+  return configText.split(new RegExp("^" + name + ":\\s*$", "m"))[1]
+    ?.split(/^[A-Za-z_][\w-]*:\s*$/m)[0] || "";
+}
+const geminiTTSSection = configSection("gemini_tts");
+const ttsModelsBlock = geminiTTSSection.match(
   /^\s{2}models:\s*\r?\n((?:\s{4}-\s+\S+\s*(?:\r?\n|$))+)/m
 )?.[1] || "";
 const configuredTTSModels = ttsModelsBlock
   .split(/\r?\n/)
   .map((line) => line.match(/^\s{4}-\s+(\S+)\s*$/)?.[1])
   .filter(Boolean);
-if (!configuredTTSModels.length) fail("config.yaml must define at least one tts.models entry.");
+if (!configuredTTSModels.length) fail("config.yaml must define at least one gemini_tts.models entry.");
+const vieneuModel = configSection("vieneu_tts").match(/^\s+model:\s*(\S+)\s*$/m)?.[1];
+if (!vieneuModel) fail("config.yaml must define vieneu_tts.model.");
+configuredTTSModels.push(vieneuModel);
 const sourceFiles = git(["ls-files"])
   .split(/\r?\n/)
   .filter((relativePath) =>

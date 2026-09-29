@@ -76,7 +76,7 @@ LOCKED ECHOLY BEHAVIOR
 Preserve unless a real browser test proves a defect and the user approves a change:
 - translation batch size: 10 sentences
 - lookahead: 30 seconds
-- TTS render concurrency: 5 workers
+- TTS render concurrency is provider-configured: Gemini default 5 workers; local VieNeu CPU default 1 worker
 - regroup gap: 1500 ms
 - regroup max words: 15
 - first wave: 2 forward sentences from current playhead
@@ -130,7 +130,7 @@ Rules:
 INITIAL REAL PROVIDERS FOR TESTING
 For the first working build only:
 - Translation: Gemini API
-- TTS: Gemini TTS API with model selected from config
+- TTS: selectable Gemini TTS API or local VieNeu-TTS v3 Turbo, with provider/model/voice selected from config
 
 These are initial adapters for proving the architecture, not permanent core dependencies.
 
@@ -160,7 +160,7 @@ Every phase from Phase 2 onward must include a real-provider smoke test when tha
 Quota policy:
 - deliberately tiny inputs only
 - Gemini connectivity/parsing test: 1–2 very short lines
-- Gemini TTS test: one very short Vietnamese sentence
+- configured TTS test: one very short Vietnamese sentence
 - browser E2E: only a short playback window
 - reuse generated test outputs where possible
 - no aggressive automatic retries
@@ -249,7 +249,7 @@ DEFINITION OF DONE FOR CURRENT MVP
 Done only when:
 - unpacked Chrome MV3 extension loads
 - captioned YouTube VOD dubs end-to-end
-- Gemini translation/TTS schemas and model selection stay in adapters/config, not core scheduling logic
+- Gemini/VieNeu TTS schemas and model selection stay in adapters/config, not core scheduling logic
 - complete TTS audio is decoded and scheduled using Echoly timing
 - first-wave + 30s rolling lookahead works
 - pause/resume + seek stay synchronized

@@ -11,7 +11,7 @@
   const AudioScheduler = globalThis.SubToVoiceAudioScheduler;
   if (!AudioScheduler) throw new Error("Sub-to-Voice audio scheduler did not load.");
 
-  const SUBFIRST_RENDER_CONCURRENCY = 5;
+  const DEFAULT_RENDER_CONCURRENCY = 5;
   const VOICE_GAIN_MAX = 2;
 
   const YT_CC_BUTTON_SELECTORS = [
@@ -300,8 +300,12 @@
     }
 
     let cursor = 0;
+    const renderConcurrency = Math.max(
+      1,
+      Math.floor(current.settings.ttsConcurrency ?? DEFAULT_RENDER_CONCURRENCY)
+    );
     const workers = Array.from(
-      { length: Math.min(SUBFIRST_RENDER_CONCURRENCY, queue.length) },
+      { length: Math.min(renderConcurrency, queue.length) },
       async () => {
         while (cursor < queue.length) {
           if (current !== session || current.stopFlag) return;

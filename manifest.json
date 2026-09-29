@@ -9,7 +9,8 @@
   "host_permissions": [
     "https://*.youtube.com/*",
     "https://youtube.com/*",
-    "https://generativelanguage.googleapis.com/*"
+    "https://generativelanguage.googleapis.com/*",
+    "http://127.0.0.1:8000/*"
   ],
   "background": {
     "service_worker": "background.js"

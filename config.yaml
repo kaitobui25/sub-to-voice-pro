@@ -17,13 +17,23 @@ translation:
 
 tts:
   provider: gemini
+  speed: 1
+
+gemini_tts:
   base_url: https://generativelanguage.googleapis.com/v1beta
   # Fallback order. Adapter only moves to the next model on HTTP 429.
   models:
     - gemini-3.8-flash-lite-tts
     - gemini-3.8-flash-tts
   voice: Kore
-  speed: 1
+  max_concurrency: 5
+
+vieneu_tts:
+  base_url: http://127.0.0.1:8000/v1
+  model: vieneu-v3-turbo
+  voice: Hải Đăng
+  sample_rate: 48000
+  max_concurrency: 1
 
 audio:
   original_volume: 18
