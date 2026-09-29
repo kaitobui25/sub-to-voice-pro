@@ -109,6 +109,18 @@ const runtimeConfig = {
     provider: config.translation?.provider || "gemini",
     baseUrl: config.translation?.base_url,
     models: config.translation?.models || [],
+    fallbackProviders: config.translation?.fallback_providers || [],
+    google: {
+      baseUrl: config.google_translate?.base_url,
+      client: config.google_translate?.client,
+      timeoutMs: config.google_translate?.timeout_ms
+    },
+    microsoft: {
+      authUrl: config.microsoft_translate?.auth_url,
+      baseUrl: config.microsoft_translate?.base_url,
+      tokenTtlMs: config.microsoft_translate?.token_ttl_ms,
+      timeoutMs: config.microsoft_translate?.timeout_ms
+    },
     sourceLanguage: config.translation?.source_language || "auto",
     targetLanguage: config.translation?.target_language || "vi",
     apiKey: geminiApiKey

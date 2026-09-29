@@ -100,6 +100,39 @@ test("translation manager rejects blank translated strings", async () => {
   );
 });
 
+test("translation manager falls back per batch and preserves line order", async () => {
+  const calls = [];
+  const registry = new TranslationProviderRegistry();
+  registry.register("gemini", { async translateBatch({ lines }) {
+    calls.push("gemini");
+    if (lines[0] === "line-0") throw new Error("unavailable");
+    return lines.map((line) => "gemini:" + line);
+  } });
+  registry.register("google", { async translateBatch({ lines }) {
+    calls.push("google");
+    return lines.map((line) => "google:" + line);
+  } });
+  const manager = new TranslationManager({ registry, providerName: "gemini", fallbackProviders: ["google"] });
+  const lines = Array.from({ length: 11 }, (_, index) => "line-" + index);
+  const output = await manager.translateBatch({ lines, targetLanguage: "vi" });
+  assert.deepEqual(calls, ["gemini", "google", "gemini"]);
+  assert.deepEqual(output, [...lines.slice(0, 10).map((line) => "google:" + line), "gemini:line-10"]);
+});
+
+test("translation manager continues after malformed fallback and stops on abort", async () => {
+  const registry = new TranslationProviderRegistry();
+  registry.register("gemini", { async translateBatch() { throw new Error("offline"); } });
+  registry.register("google", { async translateBatch() { return [""]; } });
+  registry.register("microsoft", { async translateBatch({ lines }) { return lines.map(() => "ok"); } });
+  const manager = new TranslationManager({
+    registry, providerName: "gemini", fallbackProviders: ["google", "microsoft"]
+  });
+  assert.deepEqual(await manager.translateBatch({ lines: ["hello"], targetLanguage: "vi" }), ["ok"]);
+  const controller = new AbortController();
+  registry.register("gemini", { async translateBatch() { controller.abort(); throw new Error("cancelled"); } });
+  await assert.rejects(manager.translateBatch({ lines: ["hello"], targetLanguage: "vi", signal: controller.signal }), { name: "AbortError" });
+});
+
 test("translation manager honors AbortSignal before and between batches", async () => {
   const preAborted = new AbortController();
   preAborted.abort();

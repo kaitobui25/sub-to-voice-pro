@@ -10,6 +10,9 @@
     "https://*.youtube.com/*",
     "https://youtube.com/*",
     "https://generativelanguage.googleapis.com/*",
+    "https://translate.googleapis.com/*",
+    "https://edge.microsoft.com/*",
+    "https://api-edge.cognitive.microsofttranslator.com/*",
     "http://127.0.0.1:8000/*"
   ],
   "background": {

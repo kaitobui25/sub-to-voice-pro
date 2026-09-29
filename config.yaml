@@ -16,6 +16,20 @@ translation:
     - gemini-2.5-flash
   source_language: auto
   target_language: vi
+  fallback_providers:
+    - google
+    - microsoft
+
+google_translate:
+  base_url: https://translate.googleapis.com/translate_a/t
+  client: gtx
+  timeout_ms: 3500
+
+microsoft_translate:
+  auth_url: https://edge.microsoft.com/translate/auth
+  base_url: https://api-edge.cognitive.microsofttranslator.com/translate
+  token_ttl_ms: 540000
+  timeout_ms: 3500
 
 tts:
   provider: gemini
