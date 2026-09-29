@@ -1,0 +1,9 @@
+{
+  "name": "sub-to-voice-pro",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "check": "node --check background.js && node --check content.js && node --check lib/caption-core.js",
+    "test": "node --test tests/*.test.js"
+  }
+}
