@@ -6,6 +6,8 @@
 
   const CaptionCore = globalThis.SubToVoiceCaptionCore;
   if (!CaptionCore) throw new Error("Sub-to-Voice caption core did not load.");
+  const ProviderClient = globalThis.SubToVoiceProviderClient;
+  if (!ProviderClient) throw new Error("Sub-to-Voice provider client did not load.");
 
   const YT_CC_BUTTON_SELECTORS = [
     "button.ytp-subtitles-button",
@@ -277,9 +279,24 @@
     session = current;
     setProbe("Loading captions…");
 
+    let settings = null;
+    try {
+      settings = await ProviderClient.getRuntimeSettings();
+    } catch (error) {
+      session = null;
+      const message = error?.message || String(error);
+      setProbe(message);
+      emitState({ running: false, status: "Configuration error", errorMessage: message });
+      return { ok: false, error: message };
+    }
+
     let result = null;
     try {
-      result = await fetchYouTubeCaptions(videoId, "vi", abortController.signal);
+      result = await fetchYouTubeCaptions(
+        videoId,
+        settings.targetLanguage || "vi",
+        abortController.signal
+      );
     } catch {
       result = null;
     }
@@ -302,11 +319,35 @@
 
     let forwardIndex = sentences.findIndex((sentence) => sentence.end >= video.currentTime);
     if (forwardIndex === -1) forwardIndex = sentences.length;
-    const sample = sentences
-      .slice(forwardIndex, forwardIndex + 3)
-      .map((sentence) => sentence.start.toFixed(2) + "s  " + sentence.text)
-      .join("\n");
-    const status = "Captions ready: " + sentences.length + " sentences · " + result.source;
+    const forwardSample = sentences.slice(forwardIndex, forwardIndex + 2);
+    let translations = [];
+    if (forwardSample.length) {
+      try {
+        translations = await ProviderClient.translateBatch({
+          lines: forwardSample.map((sentence) => sentence.text),
+          sourceLanguage: settings.sourceLanguage || "auto",
+          targetLanguage: settings.targetLanguage || "vi",
+          signal: abortController.signal
+        });
+      } catch (error) {
+        if (session !== current || abortController.signal.aborted) {
+          return { ok: false, error: "Cancelled." };
+        }
+        session = null;
+        const message = error?.message || String(error);
+        setProbe("Translation failed", message);
+        emitState({ running: false, status: "Translation failed", errorMessage: message });
+        return { ok: false, error: message };
+      }
+    }
+
+    const sample = forwardSample
+      .map((sentence, index) =>
+        sentence.start.toFixed(2) + "s  " + sentence.text +
+        (translations[index] ? "\n→ " + translations[index] : "")
+      )
+      .join("\n\n");
+    const status = "Translation ready: " + translations.length + " lines · " + result.source;
     setProbe(status, sample);
     emitState({ running: true, status, errorMessage: "" });
     return { ok: true, status, count: sentences.length, forwardIndex };

@@ -1,8 +1,15 @@
 "use strict";
 
+importScripts(
+  "lib/translation-core.js",
+  "lib/providers/gemini.js"
+);
+
 const ytCaptionCache = new Map();
 const YT_CACHE_TTL_MS = 30 * 60 * 1000;
 const YT_CACHE_GC_MS = 5 * 60 * 1000;
+const providerRequestControllers = new Map();
+let runtimeConfigPromise = null;
 
 let state = {
   running: false,
@@ -13,6 +20,65 @@ let state = {
 
 function snapshot() {
   return { ...state };
+}
+
+async function loadRuntimeConfig() {
+  if (!runtimeConfigPromise) {
+    runtimeConfigPromise = fetch(chrome.runtime.getURL("runtime-config.local.json"))
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(
+            "Missing runtime-config.local.json. Run: node scripts/generate-runtime-config.mjs"
+          );
+        }
+        return response.json();
+      })
+      .catch((error) => {
+        runtimeConfigPromise = null;
+        throw error;
+      });
+  }
+  return runtimeConfigPromise;
+}
+
+function publicRuntimeSettings(config) {
+  return {
+    sourceLanguage: config.translation?.sourceLanguage || "auto",
+    targetLanguage: config.translation?.targetLanguage || "vi",
+    originalVolume: config.audio?.originalVolume ?? 18,
+    voiceVolume: config.audio?.voiceVolume ?? 100,
+    voice: config.tts?.voice || null,
+    speed: config.tts?.speed ?? 1
+  };
+}
+
+async function translateWithConfiguredProvider(message, signal) {
+  const config = await loadRuntimeConfig();
+  const translation = config.translation || {};
+  const providerName = translation.provider || "gemini";
+  if (providerName !== "gemini") {
+    throw new Error("Unsupported translation provider: " + providerName);
+  }
+
+  const models = Array.isArray(translation.models) ? translation.models.filter(Boolean) : [];
+  if (!models.length) throw new Error("No Gemini model configured.");
+
+  const registry = new SubToVoiceTranslationCore.TranslationProviderRegistry();
+  registry.register(providerName, SubToVoiceGeminiTranslationProvider.createGeminiProvider({
+    apiKey: translation.apiKey,
+    baseUrl: translation.baseUrl,
+    model: models[0]
+  }));
+  const manager = new SubToVoiceTranslationCore.TranslationManager({
+    registry,
+    providerName
+  });
+  return manager.translateBatch({
+    lines: message.lines,
+    sourceLanguage: message.sourceLanguage || translation.sourceLanguage || "auto",
+    targetLanguage: message.targetLanguage || translation.targetLanguage || "vi",
+    signal
+  });
 }
 
 function isYouTubeWatchUrl(url) {
@@ -86,7 +152,7 @@ async function ensureContentScript(tabId) {
 
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["lib/caption-core.js", "content.js"]
+    files: ["lib/caption-core.js", "lib/provider-client.js", "content.js"]
   });
   await chrome.scripting.insertCSS({
     target: { tabId },
@@ -166,6 +232,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       state.errorMessage = message.errorMessage || "";
       void setActionState(state.running ? "running" : "idle", Boolean(state.errorMessage));
     }
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (sender.tab && message?.type === "GET_RUNTIME_SETTINGS") {
+    loadRuntimeConfig().then(
+      (config) => sendResponse({ ok: true, settings: publicRuntimeSettings(config) }),
+      (error) => sendResponse({ ok: false, error: error?.message || String(error) })
+    );
+    return true;
+  }
+
+  if (sender.tab && message?.type === "TRANSLATE_BATCH") {
+    const requestId = String(message.requestId || "");
+    const controller = new AbortController();
+    if (requestId) providerRequestControllers.set(requestId, controller);
+    translateWithConfiguredProvider(message, controller.signal).then(
+      (lines) => sendResponse({ ok: true, lines }),
+      (error) => sendResponse({ ok: false, error: error?.message || String(error) })
+    ).finally(() => {
+      if (requestId) providerRequestControllers.delete(requestId);
+    });
+    return true;
+  }
+
+  if (sender.tab && message?.type === "CANCEL_PROVIDER_REQUEST") {
+    const requestId = String(message.requestId || "");
+    const controller = providerRequestControllers.get(requestId);
+    if (controller) controller.abort();
+    providerRequestControllers.delete(requestId);
     sendResponse({ ok: true });
     return false;
   }

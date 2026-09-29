@@ -1,4 +1,5 @@
 .env
 runtime-config.local.js
+runtime-config.local.json
 artifacts/
 *.log
