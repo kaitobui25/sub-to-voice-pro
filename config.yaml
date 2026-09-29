@@ -16,10 +16,10 @@ translation:
   target_language: vi
 
 tts:
-  provider: novai
-  base_url: https://aiapi-pro.com/v1
-  model: minimax-speech-2.8-turbo
-  voice: male-qn-qingse
+  provider: gemini
+  base_url: https://generativelanguage.googleapis.com/v1beta
+  model: gemini-3.8-flash-lite-tts
+  voice: Kore
   speed: 1
 
 audio:

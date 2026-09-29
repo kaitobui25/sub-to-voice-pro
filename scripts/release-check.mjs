@@ -67,7 +67,7 @@ if (permissions.has("activeTab")) {
 }
 
 const example = parseEnv(read(".env.example"));
-for (const key of ["GEMINI_API_KEY", "NOVAI_API_KEY"]) {
+for (const key of ["GEMINI_API_KEY"]) {
   if (!(key in example)) fail(".env.example is missing " + key);
   if (example[key]) fail(".env.example must keep " + key + " blank.");
 }
@@ -109,7 +109,7 @@ const coreFiles = [
   "lib/translation-core.js",
   "lib/tts-core.js"
 ];
-const providerNames = /\b(gemini|novai|minimax)\b/i;
+const providerNames = /\bgemini\b/i;
 for (const relativePath of coreFiles) {
   if (providerNames.test(read(relativePath))) {
     fail("Provider-specific name leaked into core runtime file: " + relativePath);
@@ -120,6 +120,22 @@ const forbiddenRuntimeApis = /MediaRecorder|RTCPeerConnection|getUserMedia|Audio
 for (const relativePath of coreFiles) {
   if (forbiddenRuntimeApis.test(read(relativePath))) {
     fail("Deferred architecture leaked into current MVP: " + relativePath);
+  }
+}
+
+const configText = read("config.yaml");
+const ttsSection = configText.split(/^tts:\s*$/m)[1]?.split(/^[A-Za-z_][\w-]*:\s*$/m)[0] || "";
+const configuredTTSModel = ttsSection.match(/^\s+model:\s*(\S+)\s*$/m)?.[1];
+if (!configuredTTSModel) fail("config.yaml must define tts.model.");
+const sourceFiles = git(["ls-files"])
+  .split(/\r?\n/)
+  .filter((relativePath) =>
+    /\.(?:js|mjs)$/.test(relativePath) &&
+    fs.existsSync(path.join(root, relativePath))
+  );
+for (const relativePath of sourceFiles) {
+  if (read(relativePath).includes(configuredTTSModel)) {
+    fail("Configured TTS model is hard-coded in source: " + relativePath);
   }
 }
 

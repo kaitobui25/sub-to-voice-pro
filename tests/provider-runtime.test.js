@@ -6,7 +6,7 @@ const assert = require("node:assert/strict");
 require("../lib/translation-core.js");
 require("../lib/providers/gemini.js");
 require("../lib/tts-core.js");
-require("../lib/providers/novai.js");
+require("../lib/providers/gemini-tts.js");
 const runtime = require("../lib/providers/runtime.js");
 
 test("provider runtime builds configured translation and TTS managers", () => {
@@ -17,15 +17,15 @@ test("provider runtime builds configured translation and TTS managers", () => {
     models: ["gemini-test"]
   });
   const ttsManager = runtime.createTTSManager({
-    provider: "novai",
+    provider: "gemini",
     apiKey: "test-key",
-    baseUrl: "https://example.test/v1",
+    baseUrl: "https://example.test/v1beta",
     model: "speech-test",
     voice: "voice-test"
   });
 
   assert.equal(translationManager.providerName, "gemini");
-  assert.equal(ttsManager.providerName, "novai");
+  assert.equal(ttsManager.providerName, "gemini");
 });
 
 test("provider runtime rejects unknown configured providers", () => {

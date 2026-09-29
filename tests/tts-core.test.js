@@ -3,15 +3,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { TTSManager, TTSProviderRegistry } = require("../lib/tts-core.js");
-const {
-  DEFAULT_BASE_URL,
-  DEFAULT_MODEL,
-  DEFAULT_VOICE,
-  createNovAIProvider
-} = require("../lib/providers/novai.js");
+const { createGeminiTTSProvider } = require("../lib/providers/gemini-tts.js");
 
-function makeAudioBuffer() {
-  return new Uint8Array([0x49, 0x44, 0x33, 0x04]).buffer;
+function makeWavBuffer() {
+  const bytes = new Uint8Array(44);
+  bytes.set(Buffer.from("RIFF"), 0);
+  bytes.set(Buffer.from("WAVE"), 8);
+  return bytes.buffer;
 }
 
 test("TTSManager delegates provider-neutral synthesis and validates result", async () => {
@@ -19,7 +17,7 @@ test("TTSManager delegates provider-neutral synthesis and validates result", asy
   const registry = new TTSProviderRegistry().register("fake", {
     async synthesize(request) {
       calls.push(request);
-      return { audio: makeAudioBuffer(), mimeType: "audio/mpeg" };
+      return { audio: makeWavBuffer(), mimeType: "audio/wav" };
     }
   });
   const manager = new TTSManager({ registry, provider: "fake" });
@@ -28,17 +26,16 @@ test("TTSManager delegates provider-neutral synthesis and validates result", asy
   const result = await manager.synthesize({
     text: "Xin chào",
     voice: "voice-a",
-    speed: 1.1,
+    speed: 1,
     signal: controller.signal
   });
 
-  assert.equal(result.audio.byteLength, 4);
-  assert.equal(result.mimeType, "audio/mpeg");
-  assert.equal(calls.length, 1);
+  assert.equal(result.audio.byteLength, 44);
+  assert.equal(result.mimeType, "audio/wav");
   assert.deepEqual(calls[0], {
     text: "Xin chào",
     voice: "voice-a",
-    speed: 1.1,
+    speed: 1,
     signal: controller.signal
   });
 });
@@ -46,12 +43,9 @@ test("TTSManager delegates provider-neutral synthesis and validates result", asy
 test("TTSManager surfaces provider errors unchanged", async () => {
   const expected = new Error("provider unavailable");
   const registry = new TTSProviderRegistry().register("fake", {
-    async synthesize() {
-      throw expected;
-    }
+    async synthesize() { throw expected; }
   });
   const manager = new TTSManager({ registry, provider: "fake" });
-
   await assert.rejects(manager.synthesize({ text: "hello" }), (error) => error === expected);
 });
 
@@ -60,13 +54,12 @@ test("TTSManager stops before provider call when signal is already aborted", asy
   const registry = new TTSProviderRegistry().register("fake", {
     async synthesize() {
       called = true;
-      return { audio: makeAudioBuffer(), mimeType: "audio/mpeg" };
+      return { audio: makeWavBuffer(), mimeType: "audio/wav" };
     }
   });
   const manager = new TTSManager({ registry, provider: "fake" });
   const controller = new AbortController();
   controller.abort();
-
   await assert.rejects(
     manager.synthesize({ text: "hello", signal: controller.signal }),
     (error) => error && error.name === "AbortError"
@@ -74,79 +67,84 @@ test("TTSManager stops before provider call when signal is already aborted", asy
   assert.equal(called, false);
 });
 
-test("TTSManager rejects malformed or empty provider audio", async () => {
+test("TTSManager rejects empty provider audio", async () => {
   const registry = new TTSProviderRegistry().register("fake", {
-    async synthesize() {
-      return { audio: new ArrayBuffer(0), mimeType: "audio/mpeg" };
-    }
+    async synthesize() { return { audio: new ArrayBuffer(0), mimeType: "audio/wav" }; }
   });
   const manager = new TTSManager({ registry, provider: "fake" });
-
   await assert.rejects(manager.synthesize({ text: "hello" }), /empty audio/i);
 });
 
-test("NovAI adapter owns endpoint, auth, defaults, request shape and response parsing", async () => {
-  const controller = new AbortController();
+test("Gemini TTS adapter uses configured model, voice and Interactions audio schema", async () => {
   const requests = [];
-  const provider = createNovAIProvider({
+  const wav = new Uint8Array(makeWavBuffer());
+  const provider = createGeminiTTSProvider({
     apiKey: "test-key",
-    fetch: async (url, options) => {
+    baseUrl: "https://example.test/v1beta/",
+    model: "models/speech-model-from-config",
+    voice: "Kore",
+    fetchImpl: async (url, options) => {
       requests.push({ url, options });
       return {
         ok: true,
         status: 200,
-        headers: { get: (name) => name.toLowerCase() === "content-type" ? "audio/mpeg" : null },
-        arrayBuffer: async () => makeAudioBuffer()
+        async json() {
+          return {
+            steps: [{
+              type: "model_output",
+              content: [{
+                type: "audio",
+                data: Buffer.from(wav).toString("base64"),
+                mime_type: "audio/wav"
+              }]
+            }]
+          };
+        }
       };
     }
   });
 
-  const result = await provider.synthesize({
-    text: "Xin chào",
-    speed: 1.05,
-    signal: controller.signal
-  });
-
-  assert.equal(DEFAULT_BASE_URL, "https://aiapi-pro.com/v1");
-  assert.equal(DEFAULT_MODEL, "minimax-speech-2.8-turbo");
-  assert.equal(DEFAULT_VOICE, "male-qn-qingse");
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0].url, "https://aiapi-pro.com/v1/audio/speech");
-  assert.equal(requests[0].options.method, "POST");
-  assert.equal(requests[0].options.headers.Authorization, "Bearer test-key");
-  assert.equal(requests[0].options.signal, controller.signal);
-  assert.deepEqual(JSON.parse(requests[0].options.body), {
-    model: "minimax-speech-2.8-turbo",
-    input: "Xin chào",
-    voice: "male-qn-qingse",
-    response_format: "mp3",
-    speed: 1.05
-  });
-  assert.equal(result.audio.byteLength, 4);
-  assert.equal(result.mimeType, "audio/mpeg");
+  const result = await provider.synthesize({ text: "Xin chào", speed: 1 });
+  assert.equal(requests[0].url, "https://example.test/v1beta/interactions");
+  assert.equal(requests[0].options.headers["x-goog-api-key"], "test-key");
+  const body = JSON.parse(requests[0].options.body);
+  assert.equal(body.model, "speech-model-from-config");
+  assert.equal(body.input[0].content[0].text, "Xin chào");
+  assert.deepEqual(body.response_format, { type: "audio", mime_type: "audio/wav" });
+  assert.deepEqual(body.generation_config.speech_config, [{ voice: "Kore" }]);
+  assert.equal(result.mimeType, "audio/wav");
+  assert.equal(result.audio.byteLength, 44);
 });
 
-test("NovAI adapter allows voice override and reports provider errors without exposing key", async () => {
-  const provider = createNovAIProvider({
-    apiKey: "super-secret-key",
-    fetch: async (_url, options) => {
-      assert.equal(JSON.parse(options.body).voice, "custom-voice");
-      return {
-        ok: false,
-        status: 401,
-        headers: { get: () => "application/json" },
-        text: async () => JSON.stringify({ error: { message: "invalid credentials" } })
-      };
-    }
+test("Gemini TTS adapter rejects unsupported numeric speed without silently changing speech", async () => {
+  const provider = createGeminiTTSProvider({
+    apiKey: "test-key",
+    baseUrl: "https://example.test/v1beta",
+    model: "speech-model",
+    voice: "Kore",
+    fetchImpl: async () => { throw new Error("must not call"); }
   });
+  await assert.rejects(provider.synthesize({ text: "hello", speed: 1.2 }), /requires speed=1/);
+});
 
-  await assert.rejects(
-    provider.synthesize({ text: "hello", voice: "custom-voice" }),
-    (error) => {
-      assert.match(error.message, /401/);
-      assert.match(error.message, /invalid credentials/);
-      assert.doesNotMatch(error.message, /super-secret-key/);
-      return true;
-    }
-  );
+test("Gemini TTS adapter reports provider errors without exposing key", async () => {
+  const provider = createGeminiTTSProvider({
+    apiKey: "super-secret-key",
+    baseUrl: "https://example.test/v1beta",
+    model: "speech-model",
+    voice: "Kore",
+    fetchImpl: async () => ({
+      ok: false,
+      status: 401,
+      async text() {
+        return JSON.stringify({ error: { message: "invalid super-secret-key" } });
+      }
+    })
+  });
+  await assert.rejects(provider.synthesize({ text: "hello", speed: 1 }), (error) => {
+    assert.match(error.message, /401/);
+    assert.doesNotMatch(error.message, /super-secret-key/);
+    assert.match(error.message, /\[redacted\]/);
+    return true;
+  });
 });

@@ -6,7 +6,7 @@ Build the smallest reliable Chrome extension that preserves Echoly subtitle-firs
 - removing unused modes
 - abstracting Translation providers/models
 - abstracting TTS providers/models
-- using Gemini + NovAI only as first real test providers
+- using Gemini translation + configurable Gemini TTS as the first real providers
 - delaying production UI until the core pipeline is proven stable
 
 AGENT_GOAL.txt is the binding design contract.
@@ -24,13 +24,12 @@ GIT / SECRET RULES
 - root .env is local-only and gitignored
 - commit .env.example with:
     GEMINI_API_KEY=
-    NOVAI_API_KEY=
 
 REAL API TEST RULE
 Starting at Phase 2, every phase requires a tiny real API smoke test where applicable.
 Keep quota usage minimal:
 - Gemini: 1–2 short lines
-- NovAI TTS: one short Vietnamese sentence
+- Gemini TTS: one short Vietnamese sentence
 - browser tests: only a short video window
 - no aggressive retries
 - stop once behavior is proven
@@ -128,20 +127,19 @@ Translate only a tiny forward sample on a real captioned YouTube video.
 Commit:
   feat: add configurable translation provider layer
 
-PHASE 3 — TTS ABSTRACTION + REAL NOVAI TEST
-Goal: decouple TTS from MiniMax/provider-specific core code.
+PHASE 3 — TTS ABSTRACTION + REAL GEMINI TTS TEST
+Goal: decouple TTS from provider/model-specific core code.
 
 Tasks:
 - implement TTS Provider interface + TTSManager
-- implement NovAI adapter for MiniMax Speech Turbo
-- generic OpenAI-compatible adapter only if NovAI maps cleanly
+- implement Gemini TTS adapter
 - adapter owns endpoint/key/model/voice/request/response parsing
 - core requests complete MP3/WAV
 - returns {audio:ArrayBuffer,mimeType}
-- no NovAI/MiniMax fields in scheduler/core
+- no Gemini TTS request fields or model IDs in scheduler/core
 
 Local secret:
-  NOVAI_API_KEY=<local secret>
+  GEMINI_API_KEY=<local secret>
 
 Mock/static:
 - mocked audio ArrayBuffer
@@ -151,7 +149,7 @@ Mock/static:
 - no secrets in repo
 
 REQUIRED REAL API SMOKE TEST:
-Call NovAI once with ONE short Vietnamese sentence.
+Call configured Gemini TTS once with ONE short Vietnamese sentence.
 Verify auth, model/voice, complete audio bytes, valid/decodable format.
 No quota-burning retries.
 
@@ -180,7 +178,7 @@ Deterministic tests:
 - avoid duplicate scheduling
 
 REQUIRED REAL API + BROWSER SMOKE TEST:
-Use Gemini + NovAI for only the first 1–2 needed sentences.
+Use Gemini translation + configured Gemini TTS for only the first 1–2 needed sentences.
 Verify translation -> TTS -> decode -> audible dub near expected subtitle timestamp.
 Stop immediately after proof.
 Then do one very short rolling-lookahead check with only a few more sentences.
@@ -222,7 +220,7 @@ Goal: prove core product works end-to-end in Chrome.
 Test config:
 - secrets from root .env via dev-only gitignored bridge
 - Gemini translation
-- NovAI MiniMax TTS
+- configurable Gemini TTS
 - normal non-live YouTube VOD with captions
 - 1x speed
 - short windows only
@@ -232,7 +230,7 @@ A. Start from beginning: captions, regroup, translation, first 2 TTS buffers, vi
 B. Start mid-video: first wave starts from current playhead.
 C. Pause/resume: no dub leak; resync.
 D. Seek: forward/backward, cancel stale audio, reschedule.
-E. Failure paths: invalid Gemini key, invalid NovAI key, provider error if safe, no captions, Stop during request.
+E. Failure paths: invalid Gemini key, provider error if safe, no captions, Stop during request.
 
 Record video id/URL, Chrome version, provider/model names, startup delay, sync issues, console errors. Never record keys.
 
@@ -284,7 +282,7 @@ Tasks:
 - verify .env.example blank placeholders only
 - references untouched
 - no Realtime/no-caption fallback copied
-- Gemini/NovAI/model strings only in provider/config layer
+- Gemini provider/model strings only in provider/config layer
 - document .env, dev runtime config, unpacked load, tiny smoke tests, exclusions
 - clean git status
 - one final short Chrome E2E
@@ -294,7 +292,7 @@ Acceptance:
 [ ] captions work
 [ ] regroup/dedupe matches Echoly
 [ ] Gemini real translation smoke test passed
-[ ] NovAI real TTS smoke test passed
+[ ] Gemini real TTS smoke test passed
 [ ] provider abstractions work
 [ ] audio decodes to AudioBuffer
 [ ] Echoly scheduler preserved
@@ -339,7 +337,7 @@ Current MVP is:
     Translation provider/model abstraction
     TTS provider/model abstraction
     Gemini adapter for first real translation tests
-    NovAI/MiniMax adapter for first real TTS tests
+    Gemini TTS adapter with model selected from config
     root .env for local secrets
     tiny real API smoke tests from Phase 2 onward
     correct pause/resume dub synchronization

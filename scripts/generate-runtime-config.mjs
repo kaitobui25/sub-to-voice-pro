@@ -75,7 +75,7 @@ if (!fs.existsSync(envPath)) {
 
 const env = parseEnv(fs.readFileSync(envPath, "utf8"));
 const config = parseSimpleYaml(fs.readFileSync(configPath, "utf8"));
-const missing = ["GEMINI_API_KEY", "NOVAI_API_KEY"].filter((key) => !env[key]);
+const missing = ["GEMINI_API_KEY"].filter((key) => !env[key]);
 if (missing.length) {
   throw new Error("Missing required key(s): " + missing.join(", "));
 }
@@ -90,12 +90,12 @@ const runtimeConfig = {
     apiKey: env.GEMINI_API_KEY
   },
   tts: {
-    provider: config.tts?.provider || "novai",
+    provider: config.tts?.provider || "gemini",
     baseUrl: config.tts?.base_url,
     model: config.tts?.model,
     voice: config.tts?.voice,
     speed: config.tts?.speed == null ? 1 : config.tts.speed,
-    apiKey: env.NOVAI_API_KEY
+    apiKey: env.GEMINI_API_KEY
   },
   audio: {
     originalVolume: config.audio?.original_volume == null ? 18 : config.audio.original_volume,

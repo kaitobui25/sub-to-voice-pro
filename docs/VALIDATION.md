@@ -8,7 +8,8 @@ Validation date: 2026-09-29.
 - Caption parse/regroup/dedupe deterministic tests pass.
 - Translation batch size is 10; order and output count are validated.
 - Real Gemini smoke passed with two ordered Vietnamese translations using gemini-2.5-flash.
-- TTS provider contract and NovAI request/response adapter tests pass.
+- TTS provider contract and Gemini TTS request/response adapter tests pass.
+- Real Gemini TTS smoke passed with one short Vietnamese sentence using the TTS model selected from config; response was 59,826 bytes of audio/wav.
 - Scheduler tests cover timestamp math, 30-second lookahead, late-cue skip, duplicate prevention, and source cancellation.
 - Provider-message cancellation test proves Abort sends a background cancellation request and ignores a late reply.
 - Session code implements one active session, pause/resume resync, seek cancel/reschedule, Stop cleanup, ended cleanup, and YouTube SPA cleanup.
@@ -16,20 +17,9 @@ Validation date: 2026-09-29.
 - .env and generated runtime config are gitignored.
 - Echoly reference repository remains clean.
 
-## Blocked external gate
-
-NovAI real audio generation is blocked by the configured account. A real request reached NovAI and returned HTTP 403 because trial credit cannot be used for audio models; account top-up is required. A later browser Start reached the same provider restriction. No further provider calls should be made until the account is eligible for audio models.
-
-Until that is cleared, these acceptance items cannot be proven end-to-end:
-
-- real NovAI TTS audio bytes
-- browser decodeAudioData() on real NovAI bytes
-- audible subtitle-timestamp dubbing
-- full pause/resume/seek/Stop audible E2E
-
 Official Chrome 154.0.8037.58 ignored the command-line unpacked-extension flags in the disposable automation profile. Manual Load unpacked remains the Chrome validation path. Edge headless provides a working automated MV3 load/injection gate on this host.
 
-## Browser checks after NovAI access is enabled
+## Browser checks still required after the TTS provider switch
 
 Use a short captioned VOD window at 1x speed and verify:
 

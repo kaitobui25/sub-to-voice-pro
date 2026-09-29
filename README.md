@@ -13,12 +13,12 @@ The MVP follows the locked Echoly baseline in docs/ECHOLY_BASELINE.md:
 - 30-second rolling lookahead
 - seek/pause/resume/Stop cleanup with one active session
 
-Translation and TTS are provider-neutral at the core boundary. The current development adapters are Gemini for translation and NovAI MiniMax speech for TTS.
+Translation and TTS are provider-neutral at the core boundary. The current adapters both use Gemini APIs; the TTS model is selected in config.yaml rather than hard-coded in runtime code.
 
 ## Local development
 
 1. Copy .env.example to .env.
-2. Add GEMINI_API_KEY and NOVAI_API_KEY locally.
+2. Add GEMINI_API_KEY locally.
 3. Generate the gitignored runtime bridge:
 
        npm run config
@@ -46,13 +46,13 @@ Generate local config:
 Tiny real-provider smoke tests consume provider quota or credits:
 
     npm run smoke:gemini
-    npm run smoke:novai
+    npm run smoke:tts
 
-The Gemini smoke translates exactly two short lines. The NovAI smoke synthesizes one short Vietnamese sentence and verifies non-empty audio plus MP3/WAV signature.
+The translation smoke translates exactly two short lines. The TTS smoke synthesizes one short Vietnamese sentence using the configured TTS model and verifies a complete RIFF/WAV file.
 
 ## Current scope
 
-Included: normal captioned YouTube VOD, Gemini translation adapter, NovAI MiniMax TTS adapter, complete audio-file decoding, timestamp scheduler, rolling lookahead, pause/resume/seek/Stop lifecycle.
+Included: normal captioned YouTube VOD, Gemini translation adapter, configurable Gemini TTS adapter, complete audio-file decoding, timestamp scheduler, rolling lookahead, pause/resume/seek/Stop lifecycle.
 
 Deferred: production UI, Realtime/WebRTC, no-caption audio capture fallback, live streams, non-YouTube sources, streaming TTS, AudioWorklet, playback-rate scheduling, backend/proxy.
 

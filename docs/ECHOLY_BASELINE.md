@@ -35,7 +35,7 @@ This document freezes the behavior that Sub-to-Voice-Pro ports for the current M
 | `getYouTubeVideoId`, CC button helpers, `fetchCCViaIntercept`, player-response fallback | `content.js`: caption acquisition |
 | `parseJson3Events`, `mergeWithDedupe`, `regroupToSentences` | `content.js`: ordered sentence pipeline |
 | `batchTranslateSubtitles`, `translateBatch` | provider-neutral translation manager plus Gemini adapter |
-| `renderTTSForSentence`, `renderWaveTTS` | provider-neutral TTS manager plus NovAI adapter; shared audio decode stays outside adapter |
+| `renderTTSForSentence`, `renderWaveTTS` | provider-neutral TTS manager plus Gemini TTS adapter; shared audio decode stays outside adapter |
 | `scheduleWindow`, `scheduleAroundPlayhead`, `cancelPendingSources` | Web Audio timestamp scheduler |
 | `runRollingRenderer` | 30-second rolling translation/TTS renderer |
 | `applyVolumes`, `bindVolumeDriftGuard` | separate YouTube original volume and shared dub `GainNode` |
@@ -43,7 +43,7 @@ This document freezes the behavior that Sub-to-Voice-Pro ports for the current M
 
 ## Approved differences from Echoly
 
-- Translation and TTS are provider interfaces. Core caption/scheduler code must not contain Gemini, NovAI, or MiniMax request schemas.
+- Translation and TTS are provider interfaces. Core caption/scheduler code must not contain Gemini request schemas or model IDs.
 - No Realtime, MediaRecorder, no-caption audio fallback, live-stream, playback-rate scheduling, streaming TTS, AudioWorklet, or backend server in this MVP.
 - Missing captions are a terminal, visible error for this phase.
 - Subtitle-first pause cancels scheduled dub sources. Resume recomputes `audioOffset` and reschedules around the playhead.
