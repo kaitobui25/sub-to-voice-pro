@@ -1,0 +1,13 @@
+# sub-to-voice-pro model configuration
+
+translation:
+  provider: gemini
+
+  # Fallback order:
+  # 1. gemini-2.5-flash
+  # 2. gemini-flash-lite-latest
+  # 3. gemini-3.5-flash-lite
+  models:
+    - gemini-2.5-flash
+    - gemini-flash-lite-latest
+    - gemini-3.5-flash-lite
