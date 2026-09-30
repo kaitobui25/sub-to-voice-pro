@@ -30,7 +30,7 @@ After a 429, the adapter remembers that model's cooldown from Retry-After (or th
 5. Open chrome://extensions.
 6. Enable Developer mode, choose Load unpacked, and select this folder.
 7. Open a normal captioned YouTube VOD at 1x speed.
-8. In the popup, use **Tải TXT gốc + bản dịch** to save every original YouTube caption with its timestamp, the translated sentence when available, and each dubbed audio interval that has played. Untranslated and unplayed parts remain in the TXT with an explicit status.
+8. In the popup, use **Tải TXT gốc + bản dịch** to save captions from the video position where dubbing was switched on through the position where TXT is downloaded. Each group contains original YouTube captions, the translated sentence when available, and dubbed audio intervals. Untranslated and unplayed parts remain in the TXT with an explicit status.
 9. Click the extension action to open the popup. Use the switch to start or stop dubbing, the slider to set the original video volume, and the dropdowns to select translation and TTS. Changing a provider while dubbing restarts the session at the current video position.
 
 runtime-config.local.json contains local development credentials. It is generated from .env, is gitignored, and must not be committed or shared.

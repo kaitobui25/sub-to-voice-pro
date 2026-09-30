@@ -381,22 +381,29 @@
 
   function transcriptSnapshot(current) {
     const now = current.video.currentTime;
+    const startedAt = current.logStart;
+    const inWindow = (item) => item.end > item.start
+      ? item.start < now && item.end > startedAt
+      : item.start >= startedAt && item.start <= now;
     const { groups, orphans } = CaptionCore.assignRawCaptions(current.rawCaptions, current.sentences);
     return {
       videoId: current.videoId,
+      windowStart: startedAt,
+      windowEnd: now,
       rows: current.sentences.map((sentence, index) => ({
         sortAt: sentence.start,
-        originals: groups[index],
+        originals: groups[index].filter(inWindow),
         translation: current.translations[index] || null,
         audio: current.audioTimings.filter((item) =>
           item.index === index && !item.discarded &&
-          (item.closed || item.start <= now) && current.translations[index]
+          (item.closed || item.start <= now) && current.translations[index] &&
+          item.start < now && item.end > startedAt
         ).map((item) => ({
-          start: item.start,
-          end: item.closed ? item.end : Math.min(item.end, now),
+          start: Math.max(item.start, startedAt),
+          end: Math.min(item.end, now),
           text: current.translations[index]
         })).filter((item) => item.end > item.start)
-      })).concat(orphans.map((caption) => ({
+      })).filter((row, index) => inWindow(current.sentences[index])).concat(orphans.filter(inWindow).map((caption) => ({
         sortAt: caption.start, originals: [caption], translation: null, audio: []
       }))).sort((a, b) => a.sortAt - b.sortAt)
     };
@@ -561,6 +568,7 @@
     const current = {
       video,
       videoId,
+      logStart: video.currentTime,
       settings,
       audioCtx,
       outputGain,

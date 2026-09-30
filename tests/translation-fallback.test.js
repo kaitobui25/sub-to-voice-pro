@@ -19,6 +19,25 @@ test("Google adapter posts ordered lines with configured endpoint and language",
   assert.equal(seen.options.body, "q=hi&q=hello");
 });
 
+test("Google HTML translations are decoded before they reach TTS", async () => {
+  const provider = createGoogleTranslateProvider({
+    baseUrl: "https://example.test/translate", client: "gtx", timeoutMs: 1000,
+    fetchImpl: async () => ({ ok: true, async json() { return [
+      ["Hỏi &quot;ChatGPT&quot; &amp; nói &#39;có&#39;."],
+      ["A &lt; B, C &gt; D, &#x27;hi&#x27; &nbsp;!"],
+      ["AT&T và &unknown; vẫn giữ nguyên"]
+    ]; } })
+  });
+  const result = await provider.translateBatch({
+    lines: ["one", "two", "three"], sourceLanguage: "en", targetLanguage: "vi"
+  });
+  assert.deepEqual(result, [
+    'Hỏi "ChatGPT" & nói \'có\'.',
+    "A < B, C > D, 'hi'  !",
+    "AT&T và &unknown; vẫn giữ nguyên"
+  ]);
+});
+
 test("Microsoft adapter obtains token and retries once after expired authorization", async () => {
   const calls = [];
   const provider = createMicrosoftTranslateProvider({

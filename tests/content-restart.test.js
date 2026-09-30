@@ -45,7 +45,8 @@ test("Stop then Start reuses captions already fetched for the same video", async
       if (fetchCount > 1) throw new Error("YouTube did not serve captions again");
       return { ok: true, async json() { return { events: [
         { tStartMs: 0, dDurationMs: 500, segs: [{ utf8: "Hello." }] },
-        { tStartMs: 40000, dDurationMs: 500, segs: [{ utf8: "Later." }] }
+        { tStartMs: 40000, dDurationMs: 500, segs: [{ utf8: "Later." }] },
+        { tStartMs: 80000, dDurationMs: 500, segs: [{ utf8: "Much later." }] }
       ] }; } };
     },
     setInterval() {},
@@ -71,17 +72,28 @@ test("Stop then Start reuses captions already fetched for the same video", async
   const send = (type) => new Promise((resolve) => messageHandler({ type }, {}, resolve));
 
   assert.equal((await send("CONTENT_START")).ok, true);
+  video.currentTime = 0.4;
   const transcript = (await send("CONTENT_GET_TRANSCRIPT")).transcript;
-  assert.equal(transcript.rows.length, 2);
+  assert.equal(transcript.windowStart, 0);
+  assert.equal(transcript.windowEnd, 0.4);
+  assert.equal(transcript.rows.length, 1);
   assert.equal(transcript.rows[0].originals[0].text, "Hello.");
-  assert.equal(transcript.rows[1].originals[0].start, 40);
-  assert.equal(transcript.rows[1].translation, null);
-  assert.deepEqual(Array.from(transcript.rows[1].audio), []);
+  video.currentTime = 40.2;
+  const laterTranscript = (await send("CONTENT_GET_TRANSCRIPT")).transcript;
+  assert.equal(laterTranscript.rows.length, 2);
+  assert.equal(laterTranscript.rows[1].originals[0].start, 40);
+  assert.equal(laterTranscript.rows[1].translation, null);
+  assert.deepEqual(Array.from(laterTranscript.rows[1].audio), []);
   await new Promise((resolve) => messageHandler({ type: "CONTENT_SET_ORIGINAL_VOLUME", volume: 35 }, {}, resolve));
   assert.equal(video.volume, 0.35);
   assert.equal((await send("CONTENT_STOP")).ok, true);
   assert.equal(video.volume, 1);
   assert.equal((await send("CONTENT_START")).ok, true);
   assert.equal(fetchCount, 1);
+  video.currentTime = 40.4;
+  const restartedTranscript = (await send("CONTENT_GET_TRANSCRIPT")).transcript;
+  assert.equal(restartedTranscript.windowStart, 40.2);
+  assert.equal(restartedTranscript.rows.length, 1);
+  assert.equal(restartedTranscript.rows[0].originals[0].text, "Later.");
   await send("CONTENT_STOP");
 });
