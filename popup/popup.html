@@ -24,6 +24,20 @@
       <output id="volume-value" for="original-volume">—</output>
     </div>
     <input id="original-volume" type="range" min="0" max="100" step="1" disabled>
+    <div class="provider-settings">
+      <label for="translation-provider">Nguồn dịch</label>
+      <select id="translation-provider" disabled>
+        <option value="google">Google Translate</option>
+        <option value="gemini">Gemini</option>
+        <option value="auto">Auto</option>
+      </select>
+      <label for="tts-provider">Nguồn TTS</label>
+      <select id="tts-provider" disabled>
+        <option value="vieneu">VieNeu</option>
+        <option value="gemini">Gemini</option>
+        <option value="auto">Auto</option>
+      </select>
+    </div>
     <button id="download-transcript" type="button" disabled>Tải TXT gốc + bản dịch</button>
   </main>
   <script src="../lib/transcript-export.js"></script>

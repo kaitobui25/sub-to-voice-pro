@@ -13,8 +13,8 @@ The MVP follows the locked Echoly baseline in docs/ECHOLY_BASELINE.md:
 - 30-second rolling lookahead
 - seek/pause/resume/Stop cleanup with one active session
 
-Translation and TTS are provider-neutral at the core boundary. Translation currently uses Gemini. TTS can use Gemini or a local VieNeu-TTS v3 Turbo server; models, endpoints, voices, and concurrency are selected from config rather than hard-coded in core runtime code.
-Translation models are tried in config order. On HTTP 429 or transient server failures (500/502/503/504), the Gemini adapter records a per-model cooldown and continues with the next configured text-generation model; later requests skip models still cooling down. Retry-After/provider detail is honored when present.
+Translation and TTS are provider-neutral at the core boundary. The popup defaults to Google Translate with Microsoft fallback, and VieNeu TTS. Gemini and Auto modes are also available; Auto tries Google, Microsoft, then Gemini for translation, and VieNeu then Gemini for TTS. Provider orders, models, endpoints, voices, and concurrency come from config.yaml.
+Gemini translation rotates through configured models after successful batches. On HTTP 429 or transient server failures (500/502/503/504), the adapter records a per-model cooldown and continues with the next configured model; later requests skip models still cooling down. Retry-After/provider detail is honored when present.
 TTS models are tried in config order; the adapter falls back to the next configured TTS model only when the current model returns HTTP 429.
 After a 429, the adapter remembers that model's cooldown from Retry-After (or the provider error message) and skips it until the cooldown expires, preventing repeated rate-limit calls.
 
@@ -31,7 +31,7 @@ After a 429, the adapter remembers that model's cooldown from Retry-After (or th
 6. Enable Developer mode, choose Load unpacked, and select this folder.
 7. Open a normal captioned YouTube VOD at 1x speed.
 8. In the popup, use **Tải TXT gốc + bản dịch** to save every original YouTube caption with its timestamp, the translated sentence when available, and each dubbed audio interval that has played. Untranslated and unplayed parts remain in the TXT with an explicit status.
-8. Click the extension action to open the popup. Use the switch to start or stop dubbing and the slider to set the original video volume while dubbing.
+9. Click the extension action to open the popup. Use the switch to start or stop dubbing, the slider to set the original video volume, and the dropdowns to select translation and TTS. Changing a provider while dubbing restarts the session at the current video position.
 
 runtime-config.local.json contains local development credentials. It is generated from .env, is gitignored, and must not be committed or shared.
 

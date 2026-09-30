@@ -13,10 +13,7 @@ if (!fs.existsSync(runtimeConfigPath)) {
 }
 
 const runtimeConfig = JSON.parse(fs.readFileSync(runtimeConfigPath, "utf8"));
-const tts = runtimeConfig.tts || {};
-if (tts.provider !== "gemini") {
-  throw new Error("Configured TTS provider is not gemini.");
-}
+const tts = runtimeConfig.tts?.profiles?.gemini || runtimeConfig.tts || {};
 
 const provider = createGeminiTTSProvider({
   apiKey: tts.apiKey,

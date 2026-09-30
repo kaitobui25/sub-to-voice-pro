@@ -54,23 +54,32 @@ async function originalVolumeSetting(config) {
     ? saved.originalVolume : config.audio?.originalVolume ?? 18;
 }
 
-function publicRuntimeSettings(config) {
+async function providerSelections(config) {
+  const saved = await chrome.storage.local.get(["translationSelection", "ttsSelection"]);
+  return SubToVoiceProviderRuntime.resolveSelections(config, saved);
+}
+
+function publicRuntimeSettings(config, selections) {
+  const profile = SubToVoiceProviderRuntime.ttsProfile(config.tts, selections.tts);
   return {
     sourceLanguage: config.translation?.sourceLanguage || "auto",
     targetLanguage: config.translation?.targetLanguage || "vi",
     originalVolume: config.audio?.originalVolume ?? 18,
     voiceVolume: config.audio?.voiceVolume ?? 100,
-    ttsProvider: config.tts?.provider || null,
-    voice: config.tts?.voice || null,
+    ttsProvider: selections.tts,
+    voice: profile?.voice || null,
     speed: config.tts?.speed ?? 1,
-    ttsConcurrency: Math.max(1, Math.floor(config.tts?.maxConcurrency ?? 5))
+    ttsConcurrency: Math.max(1, Math.floor(profile?.maxConcurrency ?? 5))
   };
 }
 
 async function translateWithConfiguredProvider(message, signal) {
   const config = await loadRuntimeConfig();
   const translation = config.translation || {};
-  const manager = SubToVoiceProviderRuntime.createTranslationManager(translation);
+  const selection = (await providerSelections(config)).translation;
+  const manager = SubToVoiceProviderRuntime.createTranslationManager(
+    SubToVoiceProviderRuntime.translationConfig(translation, selection)
+  );
   return manager.translateBatch({
     lines: message.lines,
     sourceLanguage: message.sourceLanguage || translation.sourceLanguage || "auto",
@@ -82,13 +91,9 @@ async function translateWithConfiguredProvider(message, signal) {
 async function synthesizeWithConfiguredProvider(message, signal) {
   const config = await loadRuntimeConfig();
   const tts = config.tts || {};
-  await SubToVoiceProviderRuntime.ensureTTSReady(config.tts);
-  const manager = SubToVoiceProviderRuntime.createTTSManager(tts);
-  return manager.synthesize({
-    text: message.text,
-    voice: message.voice || tts.voice,
-    speed: message.speed ?? tts.speed ?? 1,
-    signal
+  const selection = (await providerSelections(config)).tts;
+  return SubToVoiceProviderRuntime.synthesizeWithSelection(tts, selection, {
+    text: message.text, speed: message.speed ?? tts.speed ?? 1, signal
   });
 }
 
@@ -220,7 +225,9 @@ async function startInTab(tab) {
     errorMessage: ""
   };
   await setActionState("loading", false);
-  await SubToVoiceProviderRuntime.ensureTTSReady((await loadRuntimeConfig()).tts);
+  const config = await loadRuntimeConfig();
+  const selection = (await providerSelections(config)).tts;
+  await SubToVoiceProviderRuntime.ensureInitialTTSReady(config.tts, selection);
   if (generation !== stateGeneration) return { ok: false, cancelled: true };
   await ensureContentScript(tab.id);
   if (generation !== stateGeneration) return { ok: false, cancelled: true };
@@ -262,7 +269,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.tab && message?.type === "GET_RUNTIME_SETTINGS") {
     (async () => {
       const config = await loadRuntimeConfig();
-      const settings = publicRuntimeSettings(config);
+      const settings = publicRuntimeSettings(config, await providerSelections(config));
       settings.originalVolume = await originalVolumeSetting(config);
       sendResponse({ ok: true, settings });
     })().catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
@@ -316,6 +323,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!sender.tab && message?.type === "GET_POPUP_STATE") {
     (async () => {
       const config = await loadRuntimeConfig();
+      const selections = await providerSelections(config);
       const tabId = Number(message.tabId);
       const tab = Number.isInteger(tabId) ? await chrome.tabs.get(tabId) : null;
       sendResponse({
@@ -324,8 +332,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         canStart: isYouTubeWatchUrl(tab?.url),
         status: state.tabId === tabId ? state.status : "Ready",
         error: state.tabId === tabId ? state.errorMessage : "",
-        originalVolume: await originalVolumeSetting(config)
+        originalVolume: await originalVolumeSetting(config),
+        translationSelection: selections.translation,
+        ttsSelection: selections.tts
       });
+    })().catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (!sender.tab && message?.type === "SET_PROVIDER_SELECTION") {
+    (async () => {
+      const key = message.kind === "translation" ? "translationSelection"
+        : message.kind === "tts" ? "ttsSelection" : null;
+      if (!key || !SubToVoiceProviderRuntime.validSelection(message.kind, message.value)) {
+        throw new Error("Invalid provider selection.");
+      }
+      await chrome.storage.local.set({ [key]: message.value });
+      if (state.tabId && (state.running || state.starting)) {
+        const tab = await chrome.tabs.get(state.tabId);
+        await stopActiveSession("Changing provider");
+        await startInTab(tab);
+      }
+      sendResponse({ ok: true, value: message.value });
     })().catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
     return true;
   }

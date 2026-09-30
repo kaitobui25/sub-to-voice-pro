@@ -18,5 +18,8 @@ h1 { margin: 0 0 18px; font-size: 16px; }
 .volume-row output { font-variant-numeric: tabular-nums; color: #44516a; }
 #original-volume { width: 100%; margin: 12px 0 2px; accent-color: #2563eb; cursor: pointer; }
 #original-volume:disabled { cursor: default; }
+.provider-settings { display: grid; gap: 7px; margin-top: 20px; }
+.provider-settings label:not(:first-child) { margin-top: 8px; }
+.provider-settings select { width: 100%; padding: 7px 8px; border: 1px solid #b8c2d1; border-radius: 6px; background: #fff; color: inherit; font: inherit; }
 #download-transcript { width: 100%; margin-top: 18px; padding: 9px 12px; border: 0; border-radius: 7px; color: #fff; background: #2563eb; font: inherit; cursor: pointer; }
 #download-transcript:disabled { opacity: .55; cursor: default; }

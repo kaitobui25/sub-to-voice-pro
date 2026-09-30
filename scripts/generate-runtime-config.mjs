@@ -79,13 +79,13 @@ const geminiApiKey = env.GEMINI_API_KEY1 || env.GEMINI_API_KEY;
 if (!geminiApiKey) {
   throw new Error("Missing GEMINI_API_KEY1 (or legacy GEMINI_API_KEY).");
 }
-const ttsProvider = (env.TTS_PROVIDER || config.tts?.provider || "gemini").trim().toLowerCase();
+const ttsProvider = (env.TTS_PROVIDER || config.tts?.provider || "vieneu").trim().toLowerCase();
 if (!["gemini", "vieneu"].includes(ttsProvider)) {
   throw new Error("TTS_PROVIDER must be gemini or vieneu.");
 }
 const ttsSpeed = config.tts?.speed == null ? 1 : config.tts.speed;
-const ttsConfig = ttsProvider === "vieneu"
-  ? {
+const ttsProfiles = {
+  vieneu: {
       provider: "vieneu",
       baseUrl: config.vieneu_tts?.base_url,
       model: config.vieneu_tts?.model,
@@ -95,8 +95,8 @@ const ttsConfig = ttsProvider === "vieneu"
       busyRetryTimeoutMs: config.vieneu_tts?.busy_retry_timeout_ms,
       busyRetryDelayMs: config.vieneu_tts?.busy_retry_delay_ms,
       speed: ttsSpeed
-    }
-  : {
+    },
+  gemini: {
       provider: "gemini",
       baseUrl: config.gemini_tts?.base_url,
       models: config.gemini_tts?.models || [],
@@ -104,11 +104,25 @@ const ttsConfig = ttsProvider === "vieneu"
       maxConcurrency: config.gemini_tts?.max_concurrency,
       speed: ttsSpeed,
       apiKey: geminiApiKey
-    };
+    }
+};
+const ttsConfig = {
+  ...ttsProfiles[ttsProvider],
+  defaultSelection: config.tts?.default_selection || ttsProvider,
+  autoOrder: config.tts?.auto_order || ["vieneu", "gemini"],
+  autoBusyRetryTimeoutMs: config.tts?.auto_busy_retry_timeout_ms,
+  profiles: ttsProfiles
+};
 
 const runtimeConfig = {
   translation: {
     provider: config.translation?.provider || "gemini",
+    defaultSelection: config.translation?.default_selection || config.translation?.provider || "google",
+    orders: {
+      google: config.translation?.google_order || ["google", "microsoft"],
+      gemini: config.translation?.gemini_order || ["gemini"],
+      auto: config.translation?.auto_order || ["google", "microsoft", "gemini"]
+    },
     baseUrl: config.translation?.base_url,
     models: config.translation?.models || [],
     fallbackProviders: config.translation?.fallback_providers || [],

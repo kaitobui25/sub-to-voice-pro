@@ -8,7 +8,7 @@ const vm = require("node:vm");
 
 test("popup switch controls dubbing while volume is saved separately", async () => {
   const elements = new Map();
-  for (const id of ["enabled", "original-volume", "volume-value", "status", "download-transcript"]) {
+  for (const id of ["enabled", "original-volume", "volume-value", "status", "download-transcript", "translation-provider", "tts-provider"]) {
     elements.set(id, { checked: false, disabled: true, value: "", textContent: "", handlers: {},
       addEventListener(type, handler) { this.handlers[type] = handler; } });
   }
@@ -22,7 +22,8 @@ test("popup switch controls dubbing while volume is saved separately", async () 
         async sendMessage(message) {
           calls.push(message);
           if (message.type === "GET_POPUP_STATE") return {
-            ok: true, enabled: false, canStart: true, status: "Ready", originalVolume: 18
+            ok: true, enabled: false, canStart: true, status: "Ready", originalVolume: 18,
+            translationSelection: "google", ttsSelection: "vieneu"
           };
           if (message.type === "SET_ENABLED") return {
             ok: true, enabled: message.enabled, status: "Translating"
@@ -41,6 +42,8 @@ test("popup switch controls dubbing while volume is saved separately", async () 
   const volume = elements.get("original-volume");
   assert.equal(enabled.disabled, false);
   assert.equal(volume.value, 18);
+  assert.equal(elements.get("translation-provider").value, "google");
+  assert.equal(elements.get("tts-provider").value, "vieneu");
 
   volume.value = "35";
   volume.handlers.change();
@@ -53,4 +56,17 @@ test("popup switch controls dubbing while volume is saved separately", async () 
   enabled.checked = false;
   await enabled.handlers.change();
   assert.equal(calls.at(-1).enabled, false);
+
+  const translation = elements.get("translation-provider");
+  translation.value = "auto";
+  await translation.handlers.change();
+  assert.equal(calls.at(-2).type, "SET_PROVIDER_SELECTION");
+  assert.equal(calls.at(-2).kind, "translation");
+  assert.equal(calls.at(-2).value, "auto");
+
+  const tts = elements.get("tts-provider");
+  tts.value = "gemini";
+  await tts.handlers.change();
+  assert.equal(calls.at(-2).kind, "tts");
+  assert.equal(calls.at(-2).value, "gemini");
 });

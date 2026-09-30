@@ -266,6 +266,24 @@ test("Gemini adapter falls back to the next configured translation model on 429"
   assert.deepEqual(modelsSeen, ["primary-model", "fallback-model"]);
 });
 
+test("Gemini translation rotates configured models after successful batches", async () => {
+  const seen = [];
+  const provider = createGeminiProvider({
+    baseUrl: "https://round-robin.test/v1beta", apiKey: "test-secret",
+    models: ["model-a", "model-b"],
+    fetchImpl: async (url) => {
+      seen.push(decodeURIComponent(url.match(/\/models\/([^:]+):generateContent$/)[1]));
+      return { ok: true, async json() {
+        return { candidates: [{ content: { parts: [{ text: '{"lines":["xin"]}' }] } }] };
+      } };
+    }
+  });
+  await provider.translateBatch({ prompt: "first" });
+  await provider.translateBatch({ prompt: "second" });
+  await provider.translateBatch({ prompt: "third" });
+  assert.deepEqual(seen, ["model-a", "model-b", "model-a"]);
+});
+
 test("Gemini adapter falls back to the next configured translation model on 503", async () => {
   const modelsSeen = [];
   const provider = createGeminiProvider({

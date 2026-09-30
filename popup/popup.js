@@ -5,6 +5,8 @@ const volume = document.getElementById("original-volume");
 const volumeValue = document.getElementById("volume-value");
 const status = document.getElementById("status");
 const downloadTranscript = document.getElementById("download-transcript");
+const translationProvider = document.getElementById("translation-provider");
+const ttsProvider = document.getElementById("tts-provider");
 let tabId = null;
 let volumeTimer = null;
 let pendingVolume = Promise.resolve();
@@ -31,6 +33,10 @@ async function initialize() {
     volumeValue.value = state.originalVolume + "%";
     volume.disabled = false;
     downloadTranscript.disabled = !state.canStart;
+    translationProvider.value = state.translationSelection || "google";
+    ttsProvider.value = state.ttsSelection || "vieneu";
+    translationProvider.disabled = false;
+    ttsProvider.disabled = false;
   } catch (error) {
     showError(error);
   }
@@ -86,6 +92,21 @@ volume.addEventListener("change", () => {
   clearTimeout(volumeTimer);
   void saveVolume();
 });
+
+for (const [element, kind] of [[translationProvider, "translation"], [ttsProvider, "tts"]]) {
+  element.addEventListener("change", async () => {
+    element.disabled = true;
+    try {
+      await request({ type: "SET_PROVIDER_SELECTION", kind, value: element.value });
+      await refreshStatus();
+    } catch (error) {
+      showError(error);
+      await initialize();
+    } finally {
+      element.disabled = false;
+    }
+  });
+}
 
 downloadTranscript.addEventListener("click", async () => {
   downloadTranscript.disabled = true;

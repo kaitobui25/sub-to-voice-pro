@@ -10,9 +10,6 @@ if (!fs.existsSync(runtimePath)) {
 
 const config = JSON.parse(fs.readFileSync(runtimePath, "utf8"));
 const translation = config.translation || {};
-if (translation.provider !== "gemini") {
-  throw new Error("Configured translation provider is not Gemini.");
-}
 
 const require = createRequire(import.meta.url);
 const {

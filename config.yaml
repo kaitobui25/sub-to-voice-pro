@@ -1,7 +1,17 @@
 # sub-to-voice-pro model configuration
 
 translation:
-  provider: gemini
+  provider: google
+  default_selection: google
+  google_order:
+    - google
+    - microsoft
+  gemini_order:
+    - gemini
+  auto_order:
+    - google
+    - microsoft
+    - gemini
   base_url: https://generativelanguage.googleapis.com/v1beta
 
   # Fallback order. On HTTP 429, the adapter cools down that model and
@@ -17,7 +27,6 @@ translation:
   source_language: auto
   target_language: vi
   fallback_providers:
-    - google
     - microsoft
 
 google_translate:
@@ -32,7 +41,12 @@ microsoft_translate:
   timeout_ms: 3500
 
 tts:
-  provider: gemini
+  provider: vieneu
+  default_selection: vieneu
+  auto_order:
+    - vieneu
+    - gemini
+  auto_busy_retry_timeout_ms: 10000
   speed: 1
 
 gemini_tts:
