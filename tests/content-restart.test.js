@@ -89,6 +89,9 @@ test("Stop then Start reuses captions already fetched for the same video", async
   assert.equal(transcript.rows.length, 1);
   assert.equal(transcript.rows[0].originals[0].text, "Hello.");
   assert.equal(transcript.rows[0].processed, "Hello.");
+  assert.equal(transcript.rows[0].id, 1);
+  assert.equal(typeof transcript.rows[0].diagnostic.translationEnd, "number");
+  assert.equal(typeof transcript.rows[0].diagnostic.ttsEnd, "number");
   video.currentTime = 40.2;
   const laterTranscript = (await send("CONTENT_GET_TRANSCRIPT")).transcript;
   assert.equal(laterTranscript.rows.length, 2);

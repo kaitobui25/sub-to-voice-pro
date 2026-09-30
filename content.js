@@ -345,6 +345,25 @@
     current.outputGain.gain.value = computeGain(current.settings.voiceVolume ?? 100);
   }
 
+  function traceFor(current, index) {
+    return current.diagnostics[index] ||= { startedAt: globalThis.performance?.now?.() ?? Date.now() };
+  }
+
+  function traceTime(trace) {
+    return Math.max(0, ((globalThis.performance?.now?.() ?? Date.now()) - trace.startedAt) / 1000);
+  }
+
+  function scheduleWithTrace(current, start, end) {
+    return AudioScheduler.scheduleWindow(current, start, end, {
+      onDecision: (decision) => recordScheduleDecision(current, decision)
+    });
+  }
+
+  function recordScheduleDecision(current, decision) {
+    const trace = traceFor(current, decision.index);
+    trace.schedule = { ...decision, at: traceTime(trace) };
+  }
+
   function recordScheduledAudio(current, scheduled) {
     for (const item of scheduled || []) {
       const start = Math.max(0, item.playAt - current.audioOffset);
@@ -363,6 +382,7 @@
       if (item.closed) continue;
       if (!Number.isFinite(now) || now <= item.start) {
         item.discarded = true;
+        recordScheduleDecision(current, { index: item.index, status: "cancelled", videoTime: now });
       } else {
         item.end = Math.min(item.end, now);
       }
@@ -375,6 +395,8 @@
       if (!item.closed) {
         item.closed = true;
         item.discarded = true;
+        recordScheduleDecision(current, { index: item.index, status: "cancelled",
+          videoTime: current.video.currentTime });
       }
     }
   }
@@ -392,9 +414,12 @@
       windowEnd: now,
       rows: current.sentences.map((sentence, index) => ({
         sortAt: sentence.start,
+        start: sentence.start,
         originals: groups[index].filter(inWindow),
         processed: sentence.text,
         translation: current.translations[index] || null,
+        id: index + 1,
+        diagnostic: current.diagnostics[index] ? { ...current.diagnostics[index] } : null,
         audio: current.audioTimings.filter((item) =>
           item.index === index && !item.discarded &&
           (item.closed || item.start <= now) && current.translations[index] &&
@@ -412,16 +437,30 @@
 
   async function translateBatch(current, startIdx, endIdx) {
     if (current !== session || current.stopFlag || startIdx >= endIdx) return;
+    for (let index = startIdx; index < endIdx; index += 1) {
+      const trace = traceFor(current, index);
+      trace.translationStart = traceTime(trace);
+    }
     const slice = current.sentences.slice(startIdx, endIdx);
-    const lines = await ProviderClient.translateBatch({
-      lines: slice.map((sentence) => sentence.text),
-      sourceLanguage: current.settings.sourceLanguage || "auto",
-      targetLanguage: current.settings.targetLanguage || "vi",
-      signal: current.abortController.signal
-    });
+    let lines;
+    try {
+      lines = await ProviderClient.translateBatch({
+        lines: slice.map((sentence) => sentence.text),
+        sourceLanguage: current.settings.sourceLanguage || "auto",
+        targetLanguage: current.settings.targetLanguage || "vi",
+        signal: current.abortController.signal
+      });
+    } catch (error) {
+      for (let index = startIdx; index < endIdx; index += 1) {
+        traceFor(current, index).translationError = error?.message || String(error);
+      }
+      throw error;
+    }
     if (current !== session || current.stopFlag) return;
     for (let index = 0; index < lines.length; index += 1) {
       current.translations[startIdx + index] = lines[index];
+      const trace = traceFor(current, startIdx + index);
+      trace.translationEnd = traceTime(trace);
     }
   }
 
@@ -446,6 +485,10 @@
           text: current.sentences[Math.max(0, start - contextSize) + offset].text,
           speaker
         })).filter((item) => item.speaker);
+      for (let index = start; index < end; index += 1) {
+        const trace = traceFor(current, index);
+        trace.speakerStart = traceTime(trace);
+      }
       try {
         const labels = await ProviderClient.labelSpeakers({
           lines, context, signal: current.abortController.signal
@@ -454,6 +497,9 @@
         if (!Array.isArray(labels) || labels.length !== lines.length) throw new Error("Invalid speaker labels.");
         for (let offset = 0; offset < labels.length; offset += 1) {
           current.speakers[start + offset] = labels[offset];
+          const trace = traceFor(current, start + offset);
+          trace.speaker = labels[offset];
+          trace.speakerEnd = traceTime(trace);
         }
         emitState({ detectedSpeakers: [...new Set(current.speakers.filter((label) =>
           /^S[1-9]\d*$/.test(label || "")))].sort((a, b) =>
@@ -461,6 +507,9 @@
         start = end;
       } catch (error) {
         if (current.abortController.signal.aborted) return;
+        for (let index = start; index < end; index += 1) {
+          traceFor(current, index).speakerError = error?.message || String(error);
+        }
         current.speakerLabelingUnavailable = true;
         console.warn("Speaker labeling unavailable; using the default voice.", error);
         return;
@@ -487,18 +536,25 @@
         while (cursor < queue.length) {
           if (current !== session || current.stopFlag) return;
           const index = queue[cursor++];
-          const result = await ProviderClient.synthesize({
-            text: current.translations[index],
-            voice: current.settings.voice,
-            speaker: current.speakers[index] || "U",
-            speed: current.settings.speed,
-            signal: current.abortController.signal
-          });
-          if (current !== session || current.stopFlag) return;
-          current.sentences[index]._buffer = await AudioScheduler.decodeCompleteAudio(
-            current.audioCtx,
-            result.audio
-          );
+          const trace = traceFor(current, index);
+          trace.ttsStart = traceTime(trace);
+          try {
+            const result = await ProviderClient.synthesize({
+              text: current.translations[index],
+              voice: current.settings.voice,
+              speaker: current.speakers[index] || "U",
+              speed: current.settings.speed,
+              signal: current.abortController.signal
+            });
+            if (current !== session || current.stopFlag) return;
+            current.sentences[index]._buffer = await AudioScheduler.decodeCompleteAudio(
+              current.audioCtx, result.audio
+            );
+            trace.ttsEnd = traceTime(trace);
+          } catch (error) {
+            trace.ttsError = error?.message || String(error);
+            throw error;
+          }
         }
       }
     );
@@ -555,7 +611,7 @@
         if (current !== session || current.stopFlag) return;
         await renderWaveTTS(current, start, end);
         if (current !== session || current.stopFlag) return;
-        recordScheduledAudio(current, AudioScheduler.scheduleWindow(current, start, end));
+        recordScheduledAudio(current, scheduleWithTrace(current, start, end));
         current.renderCursor = end;
         updateLiveDisplay(current);
       } catch (error) {
@@ -626,6 +682,7 @@
       sentences: [],
       rawCaptions: [],
       translations: [],
+      diagnostics: [],
       speakers: [],
       speakerLabelingUnavailable: false,
       audioTimings: [],
@@ -733,7 +790,7 @@
       const record = current.audioTimingBySource.get(source);
       if (record) record.closed = true;
     };
-    recordScheduledAudio(current, AudioScheduler.scheduleWindow(current, firstWave.start, firstWave.end));
+    recordScheduledAudio(current, scheduleWithTrace(current, firstWave.start, firstWave.end));
     current.renderCursor = firstWave.end;
     applyVolumes(current);
 
@@ -757,7 +814,9 @@
         current.audioCtx.currentTime,
         current.video.currentTime
       );
-      const window = AudioScheduler.scheduleAroundPlayhead(current, current.video);
+      const window = AudioScheduler.scheduleAroundPlayhead(current, current.video, {
+        onDecision: (decision) => recordScheduleDecision(current, decision)
+      });
       recordScheduledAudio(current, window.scheduled);
       if (window.start < current.renderCursor) current.renderCursor = window.start;
       updateLiveDisplay(current);
@@ -771,7 +830,9 @@
         current.audioCtx.currentTime,
         current.video.currentTime
       );
-      const window = AudioScheduler.scheduleAroundPlayhead(current, current.video);
+      const window = AudioScheduler.scheduleAroundPlayhead(current, current.video, {
+        onDecision: (decision) => recordScheduleDecision(current, decision)
+      });
       recordScheduledAudio(current, window.scheduled);
       if (window.start < current.renderCursor) current.renderCursor = window.start;
       updateLiveDisplay(current);

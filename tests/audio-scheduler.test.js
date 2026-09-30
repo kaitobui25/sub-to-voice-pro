@@ -53,9 +53,15 @@ test("scheduleWindow skips materially late cues", () => {
     pendingSources: []
   };
 
-  const scheduled = scheduleWindow(session, 0, 2);
+  const decisions = [];
+  const scheduled = scheduleWindow(session, 0, 2, {
+    onDecision: (decision) => decisions.push(decision)
+  });
   assert.deepEqual(scheduled.map((item) => item.index), [1]);
   assert.equal(audioCtx.created.length, 1);
+  assert.deepEqual(decisions.map(({ status }) => status), ["late", "scheduled"]);
+  assert.equal(decisions[0].lateBy, 5);
+  assert.equal(decisions[0].limit, 0.5);
 });
 
 test("scheduleWindow does not schedule one sentence twice", () => {
