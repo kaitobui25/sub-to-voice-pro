@@ -45,6 +45,17 @@ The Windows CPU/ONNX install lives outside this extension repo at:
 
     ..\tools\VieNeu-TTS
 
+With Git and `uv` installed, run these commands from this extension folder:
+
+    git clone https://github.com/pnnbao97/VieNeu-TTS.git ..\tools\VieNeu-TTS
+    Push-Location ..\tools\VieNeu-TTS
+    uv sync
+    Pop-Location
+    npm run vieneu:start
+    npm run vieneu:health
+
+If `..\tools\VieNeu-TTS` already exists, skip the clone and run `uv sync` there. The start script expects its `.venv` in that directory.
+
 On Windows, install the native startup helper once using the ID shown at `chrome://extensions`:
 
     npm run vieneu:install-host -- <extension-id>
