@@ -3,28 +3,39 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const input = path.resolve(process.argv[2] || "../log/sub-to-voice-1_iNTFSw4Nc.txt");
-const output = path.resolve(process.argv[3] || `artifacts/speaker-probe-${path.basename(input, ".txt")}.json`);
+const inputArg = process.argv[2];
+if (!inputArg || inputArg.startsWith("--")) throw new Error("Usage: node references/speaker-probe.mjs INPUT.txt [OUTPUT.json] [--dry-run]");
+const input = path.resolve(inputArg);
+const output = path.resolve(process.argv[3] && !process.argv[3].startsWith("--")
+  ? process.argv[3] : `artifacts/speaker-probe-${path.basename(input, ".txt")}.json`);
 const dryRun = process.argv.includes("--dry-run");
 const chunkSize = 35;
 const contextSize = 8;
+const promptVersion = 2;
 
 function readLines(text) {
   return text.replace(/^\uFEFF/, "").split(/\r?\n\s*\r?\n/).map((block) => {
     const lines = block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const processed = lines.find((line) => line.startsWith("Câu đã xử lý:"));
+    if (processed) {
+      const value = processed.slice("Câu đã xử lý:".length).trim();
+      return value === "[Không có]" ? null : value;
+    }
     return lines.find((line) => !/^\[\d{2}:\d{2}:\d{2}/.test(line));
   }).filter(Boolean).map((text, index) => ({ id: index + 1, text }));
 }
 
-function promptFor(chunk, context) {
-  return `You are labeling speakers in an English podcast transcript. Use only the text below. Do not translate or rewrite it.
+function promptFor(chunk, context, profiles) {
+  return `You are identifying speakers from processed English subtitle text. You have no information about the video, its participants, names, topic, or number of speakers. Use only the supplied lines. Do not translate or rewrite them.
 
 Stable labels:
-S1 = Andrew Huberman, the host. He introduces himself as Andrew, thanks Oded for joining, and normally asks the questions.
-S2 = Oded, the guest. He replies "Totally my pleasure" near the opening and normally explains his research.
-U = unclear from the text. Do not guess merely because a line is next to another line; short fragments can continue across a speaker turn.
+S1 = the first distinct speaker identifiable in this excerpt. S2 = the next distinct speaker, S3 = the next, and so on. Never renumber labels. Do not assume there are exactly two speakers.
+U = unclear, including a line containing multiple speakers or a fragment whose speaker cannot be inferred reliably.
 
-The caption lines are imperfect ASR fragments. A single line may contain both speakers or a cut through a sentence. For a mixed line choose U and flag it in notes. Keep S1/S2 identities consistent across chunks. Use conversational roles, first-person references, direct address, and adjacent context as evidence. Distinguish confidence: high, medium, low. When evidence is weak, use U.
+The lines are imperfect ASR fragments. A question does not automatically imply a new speaker; quoted speech is not a speaker turn. A short acknowledgment such as "right" or "okay" is U unless surrounding text gives strong evidence. Use turn-taking, first-person continuity, direct address, and adjacent context. Keep labels consistent across chunks. Be conservative: when the text does not distinguish voices, choose U instead of guessing. Confidence is high, medium, or low.
+
+Speaker profiles inferred from earlier chunks (do not invent identities):
+${JSON.stringify(profiles)}
 
 Previous labeled context (do not repeat these IDs in output):
 ${JSON.stringify(context)}
@@ -32,7 +43,7 @@ ${JSON.stringify(context)}
 Assign exactly one label to every ID here:
 ${JSON.stringify(chunk)}
 
-Return only JSON: {"assignments":[{"id":1,"speaker":"S1|S2|U","confidence":"high|medium|low"}],"notes":[{"ids":[1],"reason":"brief evidence or ambiguity"}]}. Include notes only for uncertain or mixed turns. Do not omit or add IDs.`;
+Return only JSON: {"assignments":[{"id":1,"speaker":"S1|S2|S3|U","confidence":"high|medium|low"}],"profiles":{"S1":"brief text-based role/style clue"},"notes":[{"ids":[1],"reason":"brief evidence or ambiguity"}]}. Include notes only for uncertain or mixed turns. Do not omit or add IDs.`;
 }
 
 function parseGemini(payload) {
@@ -78,7 +89,7 @@ function validate(data, chunk) {
   }
   return chunk.map((item) => {
     const value = byId.get(item.id);
-    if (!["S1", "S2", "U"].includes(value.speaker)) throw new Error(`Invalid speaker at ${item.id}.`);
+    if (!/^S[1-9]\d*$/.test(value.speaker) && value.speaker !== "U") throw new Error(`Invalid speaker at ${item.id}.`);
     return { ...item, speaker: value.speaker, confidence: value.confidence || "low" };
   });
 }
@@ -90,17 +101,20 @@ if (!config?.apiKey || !config?.models?.length) throw new Error("Run npm run con
 
 let results = [];
 let chunks = [];
+let profiles = {};
 if (!dryRun) {
   const previous = await fs.readFile(output, "utf8").then(JSON.parse).catch(() => null);
-  if (previous?.input === input && Array.isArray(previous.lines) && Array.isArray(previous.chunks)) {
+  if (previous?.input === input && previous.promptVersion === promptVersion &&
+      Array.isArray(previous.lines) && Array.isArray(previous.chunks)) {
     results = previous.lines;
     chunks = previous.chunks;
+    profiles = previous.profiles || {};
   }
 }
 for (let start = results.length; start < lines.length; start += chunkSize) {
   const chunk = lines.slice(start, start + chunkSize);
   const context = results.slice(-contextSize);
-  const prompt = promptFor(chunk, context);
+  const prompt = promptFor(chunk, context, profiles);
   if (dryRun) {
     process.stdout.write(prompt + "\n");
     break;
@@ -108,10 +122,11 @@ for (let start = results.length; start < lines.length; start += chunkSize) {
   const { model, data } = await askGemini(prompt, config);
   const assigned = validate(data, chunk);
   results.push(...assigned);
+  profiles = { ...profiles, ...(data.profiles || {}) };
   chunks.push({ firstId: chunk[0].id, lastId: chunk.at(-1).id, model, notes: data.notes || [] });
   process.stdout.write(`${chunk[0].id}-${chunk.at(-1).id}: ${model}\n`);
   await fs.mkdir(path.dirname(output), { recursive: true });
-  await fs.writeFile(output, JSON.stringify({ input, speakers: { S1: "Andrew Huberman", S2: "Oded", U: "unclear" }, chunks, lines: results }, null, 2) + "\n");
+  await fs.writeFile(output, JSON.stringify({ input, promptVersion, profiles, chunks, lines: results }, null, 2) + "\n");
 }
 
 if (!dryRun) {
