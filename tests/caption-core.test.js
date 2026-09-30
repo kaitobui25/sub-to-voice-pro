@@ -5,7 +5,8 @@ const assert = require("node:assert/strict");
 const {
   parseJson3Events,
   mergeWithDedupe,
-  regroupToSentences
+  regroupToSentences,
+  assignRawCaptions
 } = require("../lib/caption-core.js");
 
 test("parseJson3Events returns ordered caption cues", () => {
@@ -17,6 +18,21 @@ test("parseJson3Events returns ordered caption cues", () => {
     { start: 1, end: 1.5, text: "Hello world" },
     { start: 2.2, end: 2.5, text: "again" }
   ]);
+});
+
+test("raw YouTube cues map to processed sentences while unmatched cues remain visible", () => {
+  const raw = [
+    { start: 0, end: .5, text: "Hello" },
+    { start: .5, end: 1, text: "world" },
+    { start: 2, end: 2.5, text: "[Music]" },
+    { start: 3, end: 3.5, text: "Next" }
+  ];
+  const result = assignRawCaptions(raw, [
+    { start: 0, end: 1, text: "Hello world" },
+    { start: 3, end: 3.5, text: "Next" }
+  ]);
+  assert.deepEqual(result.groups, [[raw[0], raw[1]], [raw[3]]]);
+  assert.deepEqual(result.orphans, [raw[2]]);
 });
 
 test("mergeWithDedupe removes sliding ASR overlap", () => {

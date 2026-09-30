@@ -92,7 +92,7 @@ downloadTranscript.addEventListener("click", async () => {
   try {
     const reply = await request({ type: "GET_TRANSCRIPT", tabId });
     const transcript = reply.transcript;
-    if (!transcript?.rows?.length) throw new Error("Chưa có đoạn voice đã phát để tải.");
+    if (!transcript?.rows?.length) throw new Error("Chưa có phụ đề để tải.");
     const content = SubToVoiceTranscriptExport.format(transcript);
     const url = URL.createObjectURL(new Blob(["\uFEFF", content], { type: "text/plain;charset=utf-8" }));
     const link = document.createElement("a");

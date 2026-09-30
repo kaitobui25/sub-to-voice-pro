@@ -44,7 +44,8 @@ test("Stop then Start reuses captions already fetched for the same video", async
       fetchCount += 1;
       if (fetchCount > 1) throw new Error("YouTube did not serve captions again");
       return { ok: true, async json() { return { events: [
-        { tStartMs: 0, dDurationMs: 500, segs: [{ utf8: "Hello." }] }
+        { tStartMs: 0, dDurationMs: 500, segs: [{ utf8: "Hello." }] },
+        { tStartMs: 40000, dDurationMs: 500, segs: [{ utf8: "Later." }] }
       ] }; } };
     },
     setInterval() {},
@@ -70,6 +71,12 @@ test("Stop then Start reuses captions already fetched for the same video", async
   const send = (type) => new Promise((resolve) => messageHandler({ type }, {}, resolve));
 
   assert.equal((await send("CONTENT_START")).ok, true);
+  const transcript = (await send("CONTENT_GET_TRANSCRIPT")).transcript;
+  assert.equal(transcript.rows.length, 2);
+  assert.equal(transcript.rows[0].originals[0].text, "Hello.");
+  assert.equal(transcript.rows[1].originals[0].start, 40);
+  assert.equal(transcript.rows[1].translation, null);
+  assert.deepEqual(Array.from(transcript.rows[1].audio), []);
   await new Promise((resolve) => messageHandler({ type: "CONTENT_SET_ORIGINAL_VOLUME", volume: 35 }, {}, resolve));
   assert.equal(video.volume, 0.35);
   assert.equal((await send("CONTENT_STOP")).ok, true);

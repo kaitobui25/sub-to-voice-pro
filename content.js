@@ -233,7 +233,15 @@
     const json = await response.json().catch(() => null);
     const isAsr = kind === "asr" || new URL(target).searchParams.get("kind") === "asr";
     const captions = CaptionCore.parseJson3Events(json?.events || [], { isAsr });
-    return captions.length ? { captions, sourceUrl: target, kind: isAsr ? "asr" : null } : null;
+    const rawCaptions = (json?.events || []).filter((event) =>
+      Number.isFinite(event?.tStartMs) && Array.isArray(event.segs)
+    ).map((event) => ({
+      start: event.tStartMs / 1000,
+      end: (event.tStartMs + (event.dDurationMs || 0)) / 1000,
+      text: event.segs.map((segment) => segment.utf8 || "").join("")
+        .replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()
+    })).filter((caption) => caption.text);
+    return captions.length ? { captions, rawCaptions, sourceUrl: target, kind: isAsr ? "asr" : null } : null;
   }
 
   async function fetchYouTubeCaptions(videoId, targetLanguage, signal) {
@@ -373,10 +381,13 @@
 
   function transcriptSnapshot(current) {
     const now = current.video.currentTime;
+    const { groups, orphans } = CaptionCore.assignRawCaptions(current.rawCaptions, current.sentences);
     return {
       videoId: current.videoId,
       rows: current.sentences.map((sentence, index) => ({
-        source: sentence.text,
+        sortAt: sentence.start,
+        originals: groups[index],
+        translation: current.translations[index] || null,
         audio: current.audioTimings.filter((item) =>
           item.index === index && !item.discarded &&
           (item.closed || item.start <= now) && current.translations[index]
@@ -385,7 +396,9 @@
           end: item.closed ? item.end : Math.min(item.end, now),
           text: current.translations[index]
         })).filter((item) => item.end > item.start)
-      })).filter((row) => row.audio.length)
+      })).concat(orphans.map((caption) => ({
+        sortAt: caption.start, originals: [caption], translation: null, audio: []
+      }))).sort((a, b) => a.sortAt - b.sortAt)
     };
   }
 
@@ -553,6 +566,7 @@
       outputGain,
       abortController,
       sentences: [],
+      rawCaptions: [],
       translations: [],
       audioTimings: [],
       audioTimingBySource: new WeakMap(),
@@ -610,6 +624,7 @@
       ? result.captions.map((caption) => ({ ...caption }))
       : CaptionCore.regroupToSentences(result.captions);
     current.sentences = sentences;
+    current.rawCaptions = result.rawCaptions || result.captions;
     current.translations = new Array(sentences.length);
     current.source = result.source;
     const firstWave = firstWaveBounds(sentences, video.currentTime);
