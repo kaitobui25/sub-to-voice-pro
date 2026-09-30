@@ -1,0 +1,460 @@
+SUB-TO-VOICE-PRO — BUILD ROADMAP / CURRENT MVP
+=================================================
+
+TARGET
+Build the smallest reliable Chrome extension that preserves Echoly subtitle-first dubbing while:
+- removing unused modes
+- abstracting Translation providers/models
+- abstracting TTS providers/models
+- using Gemini + NovAI only as first real test providers
+- delaying production UI until the core pipeline is proven stable
+
+AGENT_GOAL.txt is the binding design contract.
+
+GENERAL BUILD RULE
+Finish each phase, run its gate, commit it, then continue.
+Do not stack later work on top of a broken subtitle/audio phase.
+
+GIT / SECRET RULES
+- work only in my-sub-to-voice
+- never modify ../references
+- commit after each completed phase
+- never force-push
+- never commit API keys/tokens/cookies/generated secret config
+- root .env is local-only and gitignored
+- commit .env.example with:
+    GEMINI_API_KEY=
+    NOVAI_API_KEY=
+
+REAL API TEST RULE
+Starting at Phase 2, every phase requires a tiny real API smoke test where applicable.
+Keep quota usage minimal:
+- Gemini: 1–2 short lines
+- NovAI TTS: one short Vietnamese sentence
+- browser tests: only a short video window
+- no aggressive retries
+- stop once behavior is proven
+
+Because Chrome cannot read root .env directly:
+- create a small dev-only script/bridge that reads .env and generates/injects runtime test config
+- generated secret-bearing config must be gitignored
+- do not build production UI yet
+- do not create a backend server
+
+Suggested commit sequence:
+  docs/reference-audit
+  feat/mv3-subtitle-baseline
+  feat/translation-provider-layer
+  feat/tts-provider-layer
+  feat/web-audio-dub-scheduler
+  feat/session-controls
+  test/browser-e2e
+  fix/hardening
+  chore/release-ready
+
+------------------------------------------------------------
+PHASE 0 — AUDIT ECHOLY / FREEZE BASELINE
+------------------------------------------------------------
+
+Goal:
+Understand real Echoly subtitle-first before implementation.
+
+Tasks:
+1. locate Echoly under ../references
+2. read AGENT_GOAL.txt fully
+3. read Echoly manifest.json, background.js, relevant content.js
+4. trace:
+   Start
+   -> caption URL
+   -> JSON3
+   -> regroup/dedupe
+   -> translation
+   -> TTS
+   -> decode
+   -> first-wave schedule
+   -> video resume
+   -> rolling lookahead
+   -> pause/seek/stop
+5. map important Echoly functions to destination modules
+6. confirm locked values:
+   batch=10
+   lookahead=30s
+   TTS concurrency=5
+   gap=1500ms
+   max words=15
+   first wave=2
+
+Gate:
+Agent can explain actual Echoly subtitle-first flow from code.
+
+Commit:
+  docs: record Echoly subtitle-first baseline
+
+------------------------------------------------------------
+PHASE 1 — MINIMAL MV3 + YOUTUBE CAPTION PIPELINE
+------------------------------------------------------------
+
+Goal:
+Get real YouTube caption sentences without translation/TTS yet.
+
+Tasks:
+1. create minimal MV3 extension
+2. port Echoly timedtext interception/cache
+3. port YouTube video detection
+4. port caption acquisition layers used by Echoly:
+   - intercepted signed timedtext URL
+   - ytInitialPlayerResponse captionTracks/baseUrl
+   - Echoly legacy/plain timedtext fallback
+5. port parseJson3Events, mergeWithDedupe, regroupToSentences
+6. produce ordered [{start, end, text}, ...]
+7. no captions -> clear failure; no audio fallback
+8. create .gitignore/.env.example if not present
+
+Checks:
+- node --check
+- extension loads
+- real captioned YouTube VOD returns ordered sentence objects
+- starting mid-video identifies correct forward region
+- ../references unchanged
+
+Browser gate:
+Load unpacked -> captioned YouTube VOD -> verify actual caption timeline.
+
+Commit:
+  feat: port Echoly YouTube subtitle-first caption pipeline
+
+------------------------------------------------------------
+PHASE 2 — TRANSLATION ABSTRACTION + REAL GEMINI TEST
+------------------------------------------------------------
+
+Goal:
+Preserve Echoly translation behavior without hard-coding Gemini in core.
+
+Tasks:
+1. implement Translation Provider interface
+2. implement TranslationManager
+3. implement provider registry/config
+4. implement Gemini adapter as first real provider
+5. add generic OpenAI-compatible adapter only if useful; do not overbuild
+6. adapter owns base URL, key, model, request body, response parsing
+7. core owns batching, order, target language, cancellation/session validity
+8. preserve Echoly concise dubbing prompt
+9. preserve batch size=10
+10. validate malformed/wrong-length provider output
+11. model is config, not core constant
+
+Local secret:
+  GEMINI_API_KEY=<local secret>
+
+Mock/static tests:
+- fake provider
+- 1, 10, >10 lines
+- ordering
+- malformed response
+- AbortSignal
+
+REQUIRED REAL API SMOKE TEST:
+Call Gemini with only 1–2 very short lines.
+Verify auth, request contract, JSON parsing, output count/order, and that no key is logged.
+
+Browser gate:
+On a real captioned YouTube VOD, translate only a very small forward sample.
+Do not translate a long video.
+
+Commit:
+  feat: add configurable translation provider layer
+
+------------------------------------------------------------
+PHASE 3 — TTS ABSTRACTION + REAL NOVAI TEST
+------------------------------------------------------------
+
+Goal:
+Decouple TTS from MiniMax/provider-specific core code.
+
+Tasks:
+1. implement TTS Provider interface
+2. implement TTSManager
+3. implement NovAI adapter for MiniMax Speech Turbo as first real TTS provider
+4. add generic OpenAI-compatible TTS adapter only if NovAI maps cleanly
+5. adapter owns endpoint, key, model, voice field, request shape, response parsing
+6. core requests complete MP3/WAV
+7. return {audio: ArrayBuffer, mimeType}
+8. no NovAI/MiniMax fields in scheduler/core
+
+Local secret:
+  NOVAI_API_KEY=<local secret>
+
+Mock/static tests:
+- mocked audio ArrayBuffer
+- provider error
+- abort
+- adapter contract
+- no secrets in repo
+
+REQUIRED REAL API SMOKE TEST:
+Call NovAI once with ONE short Vietnamese sentence.
+Verify auth, model/voice, complete audio bytes, valid/decodable format.
+No quota-burning retry loop.
+
+Commit:
+  feat: add configurable TTS provider layer
+
+------------------------------------------------------------
+PHASE 4 — ECHOLY WEB AUDIO SCHEDULER + SHORT REAL E2E
+------------------------------------------------------------
+
+Goal:
+Play translated TTS at subtitle timestamps using Echoly timing.
+
+Tasks:
+1. one shared AudioContext per session
+2. one shared output GainNode
+3. decode complete provider audio via decodeAudioData()
+4. associate AudioBuffer with sentence
+5. port renderWaveTTS with concurrency=5
+6. port scheduleWindow:
+     at = audioOffset + sentence.start
+     source.start(at)
+7. preserve late-cue skip
+8. preserve first wave=2
+9. preserve lookahead=30s
+10. preserve rolling renderer concept
+11. no HTMLAudio primary scheduler
+12. no setTimeout-based subtitle playback
+
+Deterministic tests:
+- playAt math
+- late cue skip
+- cancel sources
+- avoid duplicate scheduling
+
+REQUIRED REAL API + BROWSER SMOKE TEST:
+Use Gemini + NovAI together for only the first 1–2 needed sentences.
+Verify translation -> TTS -> decode -> audible dub at expected subtitle timestamp.
+Stop immediately after proof.
+Then do one very short rolling-lookahead check with only a few additional sentences.
+
+Commit:
+  feat: port Echoly subtitle-first Web Audio scheduler
+
+------------------------------------------------------------
+PHASE 5 — SESSION CONTROLS + REAL SHORT BROWSER TEST
+------------------------------------------------------------
+
+Goal:
+Keep Echoly lifecycle and fix pause/resume synchronization.
+
+Tasks:
+1. single active session
+2. AbortController for provider calls
+3. stale-callback/session token guards
+4. seek: cancel -> recompute audioOffset -> reschedule
+5. pause: cancel pending dub sources and stop/suspend dub cleanly
+6. resume: resume AudioContext, recompute audioOffset, reschedule
+7. Stop: abort requests, cancel sources, disconnect, close AudioContext, restore volume, clear state
+8. ended -> clean stop
+9. YouTube SPA video change -> no old-session bleed
+10. no playbackRate support
+
+REQUIRED REAL BROWSER TEST:
+Use only a short region:
+- Start
+- hear 1–2 dubbed lines
+- pause 5+ seconds -> no dub continues
+- resume -> resync
+- seek forward -> no stale audio
+- seek backward -> scheduler remains valid
+- Stop -> immediate silence + cleanup
+
+Commit:
+  feat: add reliable subtitle-first session controls
+
+------------------------------------------------------------
+PHASE 6 — FULL MVP BROWSER E2E (NO PRODUCTION UI)
+------------------------------------------------------------
+
+Goal:
+Prove the core product works end-to-end in Chrome.
+
+Test config:
+- secrets from root .env via dev-only gitignored bridge
+- Gemini translation adapter
+- NovAI MiniMax TTS adapter
+- normal non-live YouTube VOD
+- captions available
+- 1x playback speed
+- short windows only
+
+Scenario A — start from beginning:
+- captions fetched
+- regroup correct
+- ordered translation
+- first 2 TTS buffers render
+- video resumes
+- dub audible at expected timestamps
+- brief rolling-lookahead check
+
+Scenario B — start mid-video:
+- move to middle before Start
+- first wave begins from current playhead, not sentence 0
+
+Scenario C — pause/resume:
+- no dub leak while paused
+- resume resyncs
+
+Scenario D — seek:
+- forward seek cancels stale speech and schedules new region
+- backward seek works again
+
+Scenario E — failure paths:
+- invalid Gemini key
+- invalid NovAI key
+- provider 4xx/5xx if safely reproducible
+- no captions
+- Stop during in-flight request
+No failure may leave state falsely stuck at "Translating".
+
+Record:
+- YouTube video id/URL
+- Chrome version
+- provider/model names, never keys
+- approximate startup delay
+- sync problems
+- console errors
+- keep real API test usage intentionally small
+
+Commit:
+  test: verify browser subtitle-to-voice MVP end to end
+
+------------------------------------------------------------
+PHASE 7 — HARDENING WITHOUT ARCHITECTURE CHANGES
+------------------------------------------------------------
+
+Goal:
+Fix only concrete issues found in real E2E.
+
+Allowed:
+- stale callback cleanup
+- remove ended AudioBufferSource refs
+- better errors/retries where safe
+- cache rendered AudioBuffers for seek-back
+- prevent duplicate scheduling
+- YouTube SPA cleanup
+- tighten permissions
+- improve AbortController coverage
+- provider response parsing fixes
+- restore original volume correctly
+
+Not allowed without a new user decision:
+- production settings UI
+- replace Web Audio scheduler
+- Realtime
+- no-caption capture fallback
+- live streams
+- playback-rate scheduling
+- streaming TTS
+- AudioWorklet
+- backend/proxy
+
+After each relevant fix:
+- static/mock regression
+- if provider code changed: one tiny real API smoke test
+- if scheduler/session changed: short Chrome regression test
+
+Commit:
+  fix: harden subtitle-first dubbing pipeline
+
+------------------------------------------------------------
+PHASE 8 — CURRENT MVP RELEASE-READY PASS
+------------------------------------------------------------
+
+Goal:
+Leave a clean, reproducible, testable core MVP.
+
+Tasks:
+1. syntax/static checks
+2. review manifest permissions
+3. scan repo for secrets/tokens
+4. verify .env + generated local secret config are gitignored
+5. verify .env.example has blank placeholders only
+6. verify references untouched
+7. verify no Realtime/no-caption fallback dead code copied into product
+8. verify Gemini/NovAI/model strings live only in provider/config layer, not scheduler/core
+9. document:
+   - YouTube VOD + captions scope
+   - how to create .env
+   - how to generate/load dev runtime config
+   - how to load unpacked extension
+   - how to run tiny smoke tests
+   - current exclusions
+10. clean git status
+11. one final short Chrome E2E
+
+Final acceptance:
+[ ] MV3 unpacked load succeeds
+[ ] captions work
+[ ] regroup/dedupe matches Echoly
+[ ] translation abstraction works
+[ ] Gemini real smoke test passed
+[ ] TTS abstraction works
+[ ] NovAI real smoke test passed
+[ ] audio bytes decode to AudioBuffer
+[ ] Echoly timestamp scheduler preserved
+[ ] first wave=2
+[ ] lookahead=30s
+[ ] TTS concurrency=5
+[ ] pause stops dub
+[ ] resume resyncs
+[ ] seek cancels/reschedules
+[ ] Stop cleans resources
+[ ] no-caption fails clearly
+[ ] provider failures visible
+[ ] no API key committed
+[ ] final short browser E2E passed
+[ ] no out-of-scope architecture added
+
+Commit:
+  chore: prepare core MVP release
+
+------------------------------------------------------------
+DEFERRED PHASE — PRODUCTION UI AFTER CORE MVP IS STABLE
+------------------------------------------------------------
+
+Do this later, not now.
+
+Future UI:
+- Translation provider/model/base URL/API key
+- target language
+- TTS provider/model/voice/base URL/API key
+- original volume
+- dub volume
+- Start/Stop/status/error
+- chrome.storage.local persistence
+
+The future UI must wrap the already-proven provider interfaces.
+It must NOT change caption/translation/TTS/audio scheduler behavior.
+
+------------------------------------------------------------
+FINAL PRINCIPLE
+------------------------------------------------------------
+
+Current MVP is:
+
+  Echoly subtitle-first
+  MINUS:
+    Realtime/WebRTC
+    no-caption audio capture fallback
+    live streams
+    playback-rate work
+    production UI for now
+  PLUS:
+    Translation provider/model abstraction
+    TTS provider/model abstraction
+    Gemini adapter for first real translation tests
+    NovAI/MiniMax adapter for first real TTS tests
+    root .env for local secrets
+    tiny real API smoke tests from Phase 2 onward
+    correct pause/resume dub synchronization
+    clearer failure handling
+
+When unclear, preserve Echoly and make the smallest possible change.
