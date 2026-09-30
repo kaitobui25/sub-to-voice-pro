@@ -439,36 +439,41 @@
     if (current !== session || current.stopFlag || startIdx >= endIdx) return;
     for (let index = startIdx; index < endIdx; index += 1) {
       const trace = traceFor(current, index);
-      trace.translationStart = traceTime(trace);
+      if (trace.translationStart == null) trace.translationStart = traceTime(trace);
     }
     const slice = current.sentences.slice(startIdx, endIdx);
+    const signal = current.prepareAbortController.signal;
     let lines;
     try {
       lines = await ProviderClient.translateBatch({
         lines: slice.map((sentence) => sentence.text),
         sourceLanguage: current.settings.sourceLanguage || "auto",
         targetLanguage: current.settings.targetLanguage || "vi",
-        signal: current.abortController.signal
+        signal
       });
     } catch (error) {
-      for (let index = startIdx; index < endIdx; index += 1) {
-        traceFor(current, index).translationError = error?.message || String(error);
+      if (!signal.aborted) {
+        for (let index = startIdx; index < endIdx; index += 1) {
+          traceFor(current, index).translationError = error?.message || String(error);
+        }
       }
       throw error;
     }
-    if (current !== session || current.stopFlag) return;
+    if (current !== session || current.stopFlag || signal.aborted) return;
     for (let index = 0; index < lines.length; index += 1) {
       current.translations[startIdx + index] = lines[index];
       const trace = traceFor(current, startIdx + index);
-      trace.translationEnd = traceTime(trace);
+      if (trace.translationEnd == null) trace.translationEnd = traceTime(trace);
+      delete trace.translationError;
     }
   }
 
-  async function labelSpeakerWave(current, startIdx, endIdx) {
+  async function labelSpeakerWave(current, startIdx, endIdx, startupOnly = false) {
     if (!current.settings.multiVoice || current.speakerLabelingUnavailable) return;
     const chunkSize = Math.max(1, Math.floor(current.settings.speakerChunkSize || 24));
     const contextSize = Math.max(0, Math.floor(current.settings.speakerContextSize || 8));
-    const target = Math.min(current.sentences.length, Math.max(endIdx, startIdx + chunkSize));
+    const target = startupOnly ? endIdx
+      : Math.min(current.sentences.length, Math.max(endIdx, startIdx + chunkSize));
     for (let start = startIdx; start < target;) {
       if (current !== session || current.stopFlag) return;
       if (current.speakers[start]) {
@@ -489,24 +494,29 @@
         const trace = traceFor(current, index);
         trace.speakerStart = traceTime(trace);
       }
+      const signal = current.prepareAbortController.signal;
       try {
         const labels = await ProviderClient.labelSpeakers({
-          lines, context, signal: current.abortController.signal
+          lines, context, signal
         });
-        if (current !== session || current.stopFlag) return;
+        if (current !== session || current.stopFlag || signal.aborted) return;
         if (!Array.isArray(labels) || labels.length !== lines.length) throw new Error("Invalid speaker labels.");
         for (let offset = 0; offset < labels.length; offset += 1) {
           current.speakers[start + offset] = labels[offset];
           const trace = traceFor(current, start + offset);
           trace.speaker = labels[offset];
           trace.speakerEnd = traceTime(trace);
+          delete trace.speakerError;
         }
+        const speakerDuration = traceFor(current, start).speakerEnd - traceFor(current, start).speakerStart;
+        current.estimatedSpeakerSeconds = current.estimatedSpeakerSeconds == null
+          ? speakerDuration : current.estimatedSpeakerSeconds * 0.75 + speakerDuration * 0.25;
         emitState({ detectedSpeakers: [...new Set(current.speakers.filter((label) =>
           /^S[1-9]\d*$/.test(label || "")))].sort((a, b) =>
           Number(a.slice(1)) - Number(b.slice(1))) });
         start = end;
       } catch (error) {
-        if (current.abortController.signal.aborted) return;
+        if (signal.aborted) return;
         for (let index = start; index < end; index += 1) {
           traceFor(current, index).speakerError = error?.message || String(error);
         }
@@ -517,7 +527,7 @@
     }
   }
 
-  async function renderWaveTTS(current, startIdx, endIdx) {
+  async function renderWaveTTS(current, startIdx, endIdx, options = {}) {
     const queue = [];
     for (let index = startIdx; index < endIdx; index += 1) {
       if (!current.sentences[index]?._buffer && current.translations[index]) {
@@ -538,19 +548,24 @@
           const index = queue[cursor++];
           const trace = traceFor(current, index);
           trace.ttsStart = traceTime(trace);
+          delete trace.ttsError;
           try {
             const result = await ProviderClient.synthesize({
               text: current.translations[index],
               voice: current.settings.voice,
               speaker: current.speakers[index] || "U",
               speed: current.settings.speed,
-              signal: current.abortController.signal
+              signal: options.signal || current.abortController.signal
             });
-            if (current !== session || current.stopFlag) return;
+            if (current !== session || current.stopFlag || options.signal?.aborted) return;
             current.sentences[index]._buffer = await AudioScheduler.decodeCompleteAudio(
               current.audioCtx, result.audio
             );
             trace.ttsEnd = traceTime(trace);
+            const ttsDuration = trace.ttsEnd - trace.ttsStart;
+            current.estimatedTtsSeconds = current.estimatedTtsSeconds == null
+              ? ttsDuration : current.estimatedTtsSeconds * 0.75 + ttsDuration * 0.25;
+            options.onReady?.(index);
           } catch (error) {
             trace.ttsError = error?.message || String(error);
             throw error;
@@ -576,19 +591,90 @@
     );
   }
 
+  function queueMultiVoiceAudio(current, start, end) {
+    const signal = current.renderAbortController.signal;
+    current.renderTail = current.renderTail.then(async () => {
+      if (current !== session || current.stopFlag || signal.aborted) return;
+      await renderWaveTTS(current, start, end, {
+        signal,
+        onReady(index) {
+          if (current !== session || current.stopFlag || signal.aborted) return;
+          if (current.waitingForAudio === index) {
+            void current.video.play().catch(() => {});
+          } else if (!current.video.paused) {
+            recordScheduledAudio(current, scheduleWithTrace(current, index, index + 1));
+            if (index === current.nextAudioIndex && current.scheduledSentenceIndexes.has(index)) {
+              current.nextAudioIndex += 1;
+            }
+          }
+        }
+      });
+    }).catch((error) => {
+      if (current !== session || current.stopFlag || signal.aborted) return;
+      const message = error?.message || String(error);
+      stopSession("Dub render failed", false, false);
+      setProbe("Dub render failed", message);
+      emitState({ running: false, status: "Dub render failed", errorMessage: message });
+    });
+  }
+
+  function maybeWaitForMultiVoiceAudio(current) {
+    const now = current.video.currentTime;
+    const index = current.nextAudioIndex;
+    const sentence = current.sentences[index];
+    if (!sentence || sentence.start > now + 0.5 || current.waitingForAudio != null) return;
+    if (current.scheduledSentenceIndexes.has(index)) {
+      current.nextAudioIndex += 1;
+      return;
+    }
+    if (sentence._buffer) {
+      recordScheduledAudio(current, scheduleWithTrace(current, index, index + 1));
+      if (current.scheduledSentenceIndexes.has(index)) {
+        current.nextAudioIndex += 1;
+      } else {
+        current.waitingForAudio = index;
+        const trace = traceFor(current, index);
+        trace.waitStart = traceTime(trace);
+        current.video.pause();
+      }
+      return;
+    }
+    if (current.audioTimings.some((item) => !item.closed && !item.discarded &&
+        item.start <= now && item.end > now)) return;
+    current.waitingForAudio = index;
+    const trace = traceFor(current, index);
+    trace.waitStart = traceTime(trace);
+    recordScheduleDecision(current, { index, status: "waiting", videoTime: now });
+    current.video.pause();
+  }
+
   async function runRollingRenderer(current) {
     while (current === session && !current.stopFlag) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, current.settings.multiVoice ? 250 : 1000));
       if (current !== session || current.stopFlag) return;
-      if (current.paused) {
+      if (current.paused && current.waitingForAudio == null) {
         updateLiveDisplay(current);
         continue;
       }
 
+      if (current.settings.multiVoice && !current.video.paused) {
+        maybeWaitForMultiVoiceAudio(current);
+      }
+
       const videoTime = current.video.currentTime;
-      const horizon = videoTime + (AudioScheduler.LOOKAHEAD_MS / 1000);
+      const multiLookahead = current.settings.multiVoice ? Math.min(
+        current.settings.multiVoiceMaxLookaheadSeconds ?? 120,
+        Math.max(current.settings.multiVoiceLookaheadSeconds ?? 60,
+          (current.estimatedTtsSeconds || 0) * current.settings.speakerChunkSize +
+          (current.estimatedSpeakerSeconds || 0))
+      ) : 0;
+      const horizon = videoTime + (current.settings.multiVoice
+        ? multiLookahead : AudioScheduler.LOOKAHEAD_MS / 1000);
       let targetIdx = current.sentences.findIndex((sentence) => sentence.start > horizon);
       if (targetIdx === -1) targetIdx = current.sentences.length;
+      if (current.settings.multiVoice) {
+        targetIdx = Math.min(targetIdx, current.renderCursor + current.settings.speakerChunkSize);
+      }
       if (targetIdx <= current.renderCursor) {
         updateLiveDisplay(current);
         continue;
@@ -596,6 +682,7 @@
 
       const start = current.renderCursor;
       const end = targetIdx;
+      const seekGeneration = current.seekGeneration;
       try {
         const firstUntranslated = current.translations.findIndex(
           (value, index) => index >= start && index < end && !value
@@ -609,13 +696,19 @@
           await labelSpeakerWave(current, start, end);
         }
         if (current !== session || current.stopFlag) return;
-        await renderWaveTTS(current, start, end);
-        if (current !== session || current.stopFlag) return;
-        recordScheduledAudio(current, scheduleWithTrace(current, start, end));
+        if (seekGeneration !== current.seekGeneration) continue;
+        if (current.settings.multiVoice) {
+          queueMultiVoiceAudio(current, start, end);
+        } else {
+          await renderWaveTTS(current, start, end);
+          if (current !== session || current.stopFlag) return;
+          recordScheduledAudio(current, scheduleWithTrace(current, start, end));
+        }
         current.renderCursor = end;
         updateLiveDisplay(current);
       } catch (error) {
         if (current !== session || current.stopFlag) return;
+        if (seekGeneration !== current.seekGeneration) continue;
         const message = error?.message || String(error);
         stopSession("Dub render failed", false, false);
         setProbe("Dub render failed", message);
@@ -679,12 +772,18 @@
       audioCtx,
       outputGain,
       abortController,
+      prepareAbortController: new AbortController(),
       sentences: [],
       rawCaptions: [],
       translations: [],
       diagnostics: [],
       speakers: [],
       speakerLabelingUnavailable: false,
+      renderAbortController: new AbortController(),
+      renderTail: Promise.resolve(),
+      seekGeneration: 0,
+      waitingForAudio: null,
+      nextAudioIndex: 0,
       audioTimings: [],
       audioTimingBySource: new WeakMap(),
       pendingSources: [],
@@ -760,7 +859,7 @@
       setProbe("Translating first wave…");
       await Promise.all([
         translateBatch(current, firstWave.start, firstWave.end),
-        labelSpeakerWave(current, firstWave.start, firstWave.end)
+        labelSpeakerWave(current, firstWave.start, firstWave.end, current.settings.multiVoice)
       ]);
       if (current !== session || current.stopFlag) return { ok: false, error: "Cancelled." };
       setProbe("Preparing voices…");
@@ -792,11 +891,20 @@
     };
     recordScheduledAudio(current, scheduleWithTrace(current, firstWave.start, firstWave.end));
     current.renderCursor = firstWave.end;
+    current.nextAudioIndex = firstWave.end;
     applyVolumes(current);
 
     const onPause = () => {
       if (current !== session || current.stopFlag) return;
       current.paused = true;
+      if (current.waitingForAudio != null) {
+        closeScheduledAudio(current);
+        AudioScheduler.cancelPendingSources(current);
+        if (current.sentences[current.waitingForAudio]?._buffer) {
+          void current.video.play().catch(() => {});
+        }
+        return;
+      }
       closeScheduledAudio(current);
       AudioScheduler.cancelPendingSources(current);
       void current.audioCtx.suspend().catch(() => {});
@@ -814,18 +922,51 @@
         current.audioCtx.currentTime,
         current.video.currentTime
       );
+      const waitingIndex = current.waitingForAudio;
+      current.waitingForAudio = null;
+      if (waitingIndex != null && !current.sentences[waitingIndex]?._buffer) {
+        current.waitingForAudio = waitingIndex;
+        current.video.pause();
+        return;
+      }
+      if (waitingIndex != null) {
+        const trace = traceFor(current, waitingIndex);
+        trace.waitEnd = traceTime(trace);
+        recordScheduledAudio(current, AudioScheduler.scheduleWindow(
+          current, waitingIndex, waitingIndex + 1, {
+            lateThresholdSec: Infinity,
+            onDecision: (decision) => recordScheduleDecision(current, decision)
+          }
+        ));
+      }
       const window = AudioScheduler.scheduleAroundPlayhead(current, current.video, {
         onDecision: (decision) => recordScheduleDecision(current, decision)
       });
       recordScheduledAudio(current, window.scheduled);
-      if (window.start < current.renderCursor) current.renderCursor = window.start;
+      if (current.settings.multiVoice) {
+        current.nextAudioIndex = waitingIndex != null ? waitingIndex + 1 : window.start;
+        while (current.scheduledSentenceIndexes.has(current.nextAudioIndex)) current.nextAudioIndex += 1;
+      }
+      if (!current.settings.multiVoice && window.start < current.renderCursor) {
+        current.renderCursor = window.start;
+      }
       updateLiveDisplay(current);
       emitState({ running: true, paused: false, status: "Translating", errorMessage: "" });
     };
     const onSeeked = () => {
       if (current !== session || current.stopFlag) return;
+      const wasWaitingForAudio = current.waitingForAudio != null;
       discardPendingAudio(current);
       AudioScheduler.cancelPendingSources(current);
+      if (current.settings.multiVoice) {
+        current.seekGeneration += 1;
+        current.prepareAbortController.abort();
+        current.prepareAbortController = new AbortController();
+        current.renderAbortController.abort();
+        current.renderAbortController = new AbortController();
+        current.renderTail = Promise.resolve();
+        current.waitingForAudio = null;
+      }
       current.audioOffset = AudioScheduler.computeAudioOffset(
         current.audioCtx.currentTime,
         current.video.currentTime
@@ -834,8 +975,13 @@
         onDecision: (decision) => recordScheduleDecision(current, decision)
       });
       recordScheduledAudio(current, window.scheduled);
-      if (window.start < current.renderCursor) current.renderCursor = window.start;
+      if (current.settings.multiVoice) {
+        current.renderCursor = window.start;
+        current.nextAudioIndex = window.start;
+        while (current.scheduledSentenceIndexes.has(current.nextAudioIndex)) current.nextAudioIndex += 1;
+      } else if (window.start < current.renderCursor) current.renderCursor = window.start;
       updateLiveDisplay(current);
+      if (wasWaitingForAudio) void current.video.play().catch(() => {});
     };
     const onEnded = () => {
       stopSession("Video ended.");
@@ -868,6 +1014,8 @@
       lastTranscript = transcriptSnapshot(current);
       current.stopFlag = true;
       try { current.abortController.abort(); } catch {}
+      try { current.prepareAbortController.abort(); } catch {}
+      try { current.renderAbortController.abort(); } catch {}
       AudioScheduler.cancelPendingSources(current);
       if (current._onPause) {
         try { current.video.removeEventListener("pause", current._onPause); } catch {}

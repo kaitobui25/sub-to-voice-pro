@@ -144,7 +144,9 @@ const runtimeConfig = {
   },
   speakerDetection: {
     chunkSize: config.speaker_detection?.chunk_size || 24,
-    contextSize: config.speaker_detection?.context_size || 8
+    contextSize: config.speaker_detection?.context_size || 8,
+    lookaheadSeconds: config.speaker_detection?.lookahead_seconds || 60,
+    maxLookaheadSeconds: config.speaker_detection?.max_lookahead_seconds || 120
   },
   tts: ttsConfig,
   audio: {

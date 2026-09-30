@@ -32,6 +32,8 @@ translation:
 speaker_detection:
   chunk_size: 24
   context_size: 8
+  lookahead_seconds: 60
+  max_lookahead_seconds: 120
 
 google_translate:
   base_url: https://translate.googleapis.com/translate_a/t

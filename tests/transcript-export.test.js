@@ -51,12 +51,14 @@ test("TXT explains why a translated sentence has no audio", () => {
       translationStart: 0, translationEnd: 0.8,
       speakerStart: 0, speakerEnd: 12.6, speaker: "S2",
       ttsStart: 12.7, ttsEnd: 16.1,
+      waitStart: 12.8, waitEnd: 16.2,
       schedule: { status: "late", lateBy: 11.4, limit: 0.5, videoTime: 1615.88 }
     }
   }] });
   assert.match(result, /#142 \| video 26:44:48/);
   assert.match(result, /Speaker: S2, xong \+12\.60s/);
   assert.match(result, /TTS: bắt đầu \+12\.70s, xong \+16\.10s/);
+  assert.match(result, /Chờ audio: bắt đầu \+12\.80s, tiếp tục \+16\.20s \(3\.40s\)/);
   assert.match(result, /Xếp lịch: bỏ qua — câu đã trễ 11\.40s \(giới hạn 0\.50s/);
   assert.match(result, /Audio: \[Chưa phát\]/);
 });

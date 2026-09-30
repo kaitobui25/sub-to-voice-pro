@@ -73,6 +73,8 @@ function publicRuntimeSettings(config, selections) {
     multiVoice: selections.voiceMode === "multi" && Array.isArray(profile?.speakerVoices) && profile.speakerVoices.length > 1,
     speakerChunkSize: config.speakerDetection?.chunkSize ?? 24,
     speakerContextSize: config.speakerDetection?.contextSize ?? 8,
+    multiVoiceLookaheadSeconds: config.speakerDetection?.lookaheadSeconds ?? 60,
+    multiVoiceMaxLookaheadSeconds: config.speakerDetection?.maxLookaheadSeconds ?? 120,
     voice: profile?.voice || null,
     speed: config.tts?.speed ?? 1,
     ttsConcurrency: Math.max(1, Math.floor(profile?.maxConcurrency ?? 5))
