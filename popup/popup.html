@@ -37,8 +37,18 @@
         <option value="gemini">Gemini</option>
         <option value="auto">Auto</option>
       </select>
+      <label for="voice-mode">Số giọng đọc</label>
+      <select id="voice-mode" disabled>
+        <option value="single">Một giọng</option>
+        <option value="multi">Nhiều giọng</option>
+      </select>
+      <small>Nhiều giọng dùng các giọng VieNeu đã cấu hình.</small>
     </div>
     <button id="download-transcript" type="button" disabled>Tải TXT gốc + bản dịch</button>
+    <section id="speaker-panel" class="speaker-panel" hidden aria-label="Người nói">
+      <strong>Người nói</strong>
+      <div id="speaker-list" class="speaker-list"></div>
+    </section>
   </main>
   <script src="../lib/transcript-export.js"></script>
   <script src="popup.js"></script>

@@ -21,5 +21,9 @@ h1 { margin: 0 0 18px; font-size: 16px; }
 .provider-settings { display: grid; gap: 7px; margin-top: 20px; }
 .provider-settings label:not(:first-child) { margin-top: 8px; }
 .provider-settings select { width: 100%; padding: 7px 8px; border: 1px solid #b8c2d1; border-radius: 6px; background: #fff; color: inherit; font: inherit; }
+.provider-settings small { color: #657084; line-height: 1.35; }
+.speaker-panel { margin-top: 18px; padding: 10px 12px; border-radius: 7px; background: #f1f5fb; }
+.speaker-panel[hidden] { display: none; }
+.speaker-list { margin-top: 6px; color: #44516a; line-height: 1.6; white-space: pre-line; }
 #download-transcript { width: 100%; margin-top: 18px; padding: 9px 12px; border: 0; border-radius: 7px; color: #fff; background: #2563eb; font: inherit; cursor: pointer; }
 #download-transcript:disabled { opacity: .55; cursor: default; }

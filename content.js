@@ -425,6 +425,49 @@
     }
   }
 
+  async function labelSpeakerWave(current, startIdx, endIdx) {
+    if (!current.settings.multiVoice || current.speakerLabelingUnavailable) return;
+    const chunkSize = Math.max(1, Math.floor(current.settings.speakerChunkSize || 24));
+    const contextSize = Math.max(0, Math.floor(current.settings.speakerContextSize || 8));
+    const target = Math.min(current.sentences.length, Math.max(endIdx, startIdx + chunkSize));
+    for (let start = startIdx; start < target;) {
+      if (current !== session || current.stopFlag) return;
+      if (current.speakers[start]) {
+        start += 1;
+        continue;
+      }
+      const end = Math.min(start + chunkSize, target);
+      const lines = current.sentences.slice(start, end).map((sentence, offset) => ({
+        id: start + offset + 1, text: sentence.text
+      }));
+      const context = current.speakers.slice(Math.max(0, start - contextSize), start)
+        .map((speaker, offset) => ({
+          id: Math.max(0, start - contextSize) + offset + 1,
+          text: current.sentences[Math.max(0, start - contextSize) + offset].text,
+          speaker
+        })).filter((item) => item.speaker);
+      try {
+        const labels = await ProviderClient.labelSpeakers({
+          lines, context, signal: current.abortController.signal
+        });
+        if (current !== session || current.stopFlag) return;
+        if (!Array.isArray(labels) || labels.length !== lines.length) throw new Error("Invalid speaker labels.");
+        for (let offset = 0; offset < labels.length; offset += 1) {
+          current.speakers[start + offset] = labels[offset];
+        }
+        emitState({ detectedSpeakers: [...new Set(current.speakers.filter((label) =>
+          /^S[1-9]\d*$/.test(label || "")))].sort((a, b) =>
+          Number(a.slice(1)) - Number(b.slice(1))) });
+        start = end;
+      } catch (error) {
+        if (current.abortController.signal.aborted) return;
+        current.speakerLabelingUnavailable = true;
+        console.warn("Speaker labeling unavailable; using the default voice.", error);
+        return;
+      }
+    }
+  }
+
   async function renderWaveTTS(current, startIdx, endIdx) {
     const queue = [];
     for (let index = startIdx; index < endIdx; index += 1) {
@@ -447,6 +490,7 @@
           const result = await ProviderClient.synthesize({
             text: current.translations[index],
             voice: current.settings.voice,
+            speaker: current.speakers[index] || "U",
             speed: current.settings.speed,
             signal: current.abortController.signal
           });
@@ -501,7 +545,12 @@
           (value, index) => index >= start && index < end && !value
         );
         if (firstUntranslated !== -1) {
-          await translateBatch(current, firstUntranslated, end);
+          await Promise.all([
+            translateBatch(current, firstUntranslated, end),
+            labelSpeakerWave(current, start, end)
+          ]);
+        } else {
+          await labelSpeakerWave(current, start, end);
         }
         if (current !== session || current.stopFlag) return;
         await renderWaveTTS(current, start, end);
@@ -577,6 +626,8 @@
       sentences: [],
       rawCaptions: [],
       translations: [],
+      speakers: [],
+      speakerLabelingUnavailable: false,
       audioTimings: [],
       audioTimingBySource: new WeakMap(),
       pendingSources: [],
@@ -650,7 +701,10 @@
 
     try {
       setProbe("Translating first wave…");
-      await translateBatch(current, firstWave.start, firstWave.end);
+      await Promise.all([
+        translateBatch(current, firstWave.start, firstWave.end),
+        labelSpeakerWave(current, firstWave.start, firstWave.end)
+      ]);
       if (current !== session || current.stopFlag) return { ok: false, error: "Cancelled." };
       setProbe("Preparing voices…");
       await renderWaveTTS(current, firstWave.start, firstWave.end);

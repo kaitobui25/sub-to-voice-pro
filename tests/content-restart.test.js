@@ -21,6 +21,9 @@ test("Stop then Start reuses captions already fetched for the same video", async
   const probe = { querySelector: () => ({ textContent: "" }), remove() {} };
   let messageHandler;
   let fetchCount = 0;
+  let multiVoice = false;
+  const speakerRequests = [];
+  const synthesisSpeakers = [];
   class AudioContext {
     currentTime = 0;
     destination = {};
@@ -56,9 +59,16 @@ test("Stop then Start reuses captions already fetched for the same video", async
     Set,
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
     SubToVoiceProviderClient: {
-      async getRuntimeSettings() { return { targetLanguage: "vi", sourceLanguage: "en" }; },
+      async getRuntimeSettings() { return { targetLanguage: "vi", sourceLanguage: "en", multiVoice, speakerChunkSize: 2 }; },
       async translateBatch({ lines }) { return lines; },
-      async synthesize() { return { audio: new ArrayBuffer(8) }; }
+      async labelSpeakers({ lines }) {
+        speakerRequests.push(lines.map((line) => line.id));
+        return lines.map(() => "S1");
+      },
+      async synthesize({ speaker }) {
+        synthesisSpeakers.push(speaker);
+        return { audio: new ArrayBuffer(8) };
+      }
     },
     SubToVoiceAudioScheduler: {
       LOOKAHEAD_MS: 30000,
@@ -90,8 +100,12 @@ test("Stop then Start reuses captions already fetched for the same video", async
   assert.equal(video.volume, 0.35);
   assert.equal((await send("CONTENT_STOP")).ok, true);
   assert.equal(video.volume, 1);
+  assert.equal(speakerRequests.length, 0);
+  multiVoice = true;
   assert.equal((await send("CONTENT_START")).ok, true);
   assert.equal(fetchCount, 1);
+  assert.equal(JSON.stringify(speakerRequests), "[[3]]");
+  assert.equal(synthesisSpeakers.at(-1), "S1");
   video.currentTime = 40.4;
   const restartedTranscript = (await send("CONTENT_GET_TRANSCRIPT")).transcript;
   assert.equal(restartedTranscript.windowStart, 40.2);

@@ -29,6 +29,10 @@ translation:
   fallback_providers:
     - microsoft
 
+speaker_detection:
+  chunk_size: 24
+  context_size: 8
+
 google_translate:
   base_url: https://translate.googleapis.com/translate_a/t
   client: gtx
@@ -62,6 +66,10 @@ vieneu_tts:
   base_url: http://127.0.0.1:8000/v1
   model: vieneu-v3-turbo
   voice: Hải Đăng
+  speaker_voices:
+    - Hải Đăng
+    - Thái Sơn
+    - Quang Sơn
   sample_rate: 48000
   max_concurrency: 1
   busy_retry_timeout_ms: 120000

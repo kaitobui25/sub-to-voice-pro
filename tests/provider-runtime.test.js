@@ -8,6 +8,7 @@ require("../lib/providers/gemini.js");
 require("../lib/providers/google-translate.js");
 require("../lib/providers/microsoft-translate.js");
 require("../lib/tts-core.js");
+require("../lib/speaker-core.js");
 require("../lib/providers/gemini-tts.js");
 require("../lib/providers/vieneu.js");
 const runtime = require("../lib/providers/runtime.js");
@@ -106,5 +107,29 @@ test("auto TTS falls back to Gemini with its own voice when VieNeu fails", async
     global.fetch = originalFetch;
     local.createVieNeuTTSProvider = originalLocal;
     remote.createGeminiTTSProvider = originalRemote;
+  }
+});
+
+test("multi-voice selects VieNeu speaker voices; single mode keeps its default", async () => {
+  const originalFetch = global.fetch;
+  const provider = global.SubToVoiceVieNeuTTS;
+  const originalCreate = provider.createVieNeuTTSProvider;
+  const seen = [];
+  try {
+    global.fetch = async () => ({ ok: true, async json() { return { status: "ok" }; } });
+    provider.createVieNeuTTSProvider = () => ({ async synthesize(request) {
+      seen.push(request.voice);
+      return { audio: new ArrayBuffer(1), mimeType: "audio/wav" };
+    } });
+    const config = { provider: "vieneu", baseUrl: "http://127.0.0.1:8000/v1",
+      voice: "default", speakerVoices: ["North male", "South male"] };
+    const signal = new AbortController().signal;
+    await runtime.synthesizeWithSelection(config, "vieneu", { text: "a", speaker: "S1", multiVoice: false, signal });
+    await runtime.synthesizeWithSelection(config, "vieneu", { text: "b", speaker: "S1", multiVoice: true, signal });
+    await runtime.synthesizeWithSelection(config, "vieneu", { text: "c", speaker: "S2", multiVoice: true, signal });
+    assert.deepEqual(seen, ["default", "North male", "South male"]);
+  } finally {
+    global.fetch = originalFetch;
+    provider.createVieNeuTTSProvider = originalCreate;
   }
 });

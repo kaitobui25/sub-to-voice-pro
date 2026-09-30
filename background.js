@@ -3,6 +3,7 @@
 importScripts(
   "lib/translation-core.js",
   "lib/tts-core.js",
+  "lib/speaker-core.js",
   "lib/providers/runtime.js"
 );
 
@@ -17,7 +18,8 @@ let state = {
   starting: false,
   tabId: null,
   status: "Ready",
-  errorMessage: ""
+  errorMessage: "",
+  detectedSpeakers: []
 };
 let stateGeneration = 0;
 
@@ -55,8 +57,9 @@ async function originalVolumeSetting(config) {
 }
 
 async function providerSelections(config) {
-  const saved = await chrome.storage.local.get(["translationSelection", "ttsSelection"]);
-  return SubToVoiceProviderRuntime.resolveSelections(config, saved);
+  const saved = await chrome.storage.local.get(["translationSelection", "ttsSelection", "voiceMode"]);
+  return { ...SubToVoiceProviderRuntime.resolveSelections(config, saved),
+    voiceMode: saved.voiceMode === "multi" ? "multi" : "single" };
 }
 
 function publicRuntimeSettings(config, selections) {
@@ -67,6 +70,9 @@ function publicRuntimeSettings(config, selections) {
     originalVolume: config.audio?.originalVolume ?? 18,
     voiceVolume: config.audio?.voiceVolume ?? 100,
     ttsProvider: selections.tts,
+    multiVoice: selections.voiceMode === "multi" && Array.isArray(profile?.speakerVoices) && profile.speakerVoices.length > 1,
+    speakerChunkSize: config.speakerDetection?.chunkSize ?? 24,
+    speakerContextSize: config.speakerDetection?.contextSize ?? 8,
     voice: profile?.voice || null,
     speed: config.tts?.speed ?? 1,
     ttsConcurrency: Math.max(1, Math.floor(profile?.maxConcurrency ?? 5))
@@ -91,9 +97,11 @@ async function translateWithConfiguredProvider(message, signal) {
 async function synthesizeWithConfiguredProvider(message, signal) {
   const config = await loadRuntimeConfig();
   const tts = config.tts || {};
-  const selection = (await providerSelections(config)).tts;
+  const selections = await providerSelections(config);
+  const selection = selections.tts;
   return SubToVoiceProviderRuntime.synthesizeWithSelection(tts, selection, {
-    text: message.text, speed: message.speed ?? tts.speed ?? 1, signal
+    text: message.text, speed: message.speed ?? tts.speed ?? 1,
+    speaker: message.speaker, multiVoice: selections.voiceMode === "multi", signal
   });
 }
 
@@ -199,7 +207,8 @@ async function stopActiveSession(reason) {
     starting: false,
     tabId: null,
     status: reason || "Stopped",
-    errorMessage: ""
+    errorMessage: "",
+    detectedSpeakers: []
   };
   if (tabId) {
     await chrome.tabs.sendMessage(tabId, { type: "CONTENT_STOP" }).catch(() => {});
@@ -222,7 +231,8 @@ async function startInTab(tab) {
     starting: true,
     tabId: tab.id,
     status: "Loading captions",
-    errorMessage: ""
+    errorMessage: "",
+    detectedSpeakers: []
   };
   await setActionState("loading", false);
   const config = await loadRuntimeConfig();
@@ -256,11 +266,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (sender.tab && message?.type === "CONTENT_STATE") {
     if (sender.tab.id === state.tabId) {
-      state.running = Boolean(message.running);
-      state.starting = false;
-      state.status = message.status || state.status;
-      state.errorMessage = message.errorMessage || "";
-      void setActionState(state.running ? "running" : "idle", Boolean(state.errorMessage));
+      if (Array.isArray(message.detectedSpeakers)) {
+        state.detectedSpeakers = message.detectedSpeakers.filter((label) =>
+          typeof label === "string" && /^S[1-9]\d*$/.test(label));
+      }
+      if (typeof message.running === "boolean") {
+        state.running = message.running;
+        state.starting = false;
+        state.status = message.status || state.status;
+        state.errorMessage = message.errorMessage || "";
+        void setActionState(state.running ? "running" : "idle", Boolean(state.errorMessage));
+      }
     }
     sendResponse({ ok: true });
     return false;
@@ -282,6 +298,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (requestId) providerRequestControllers.set(requestId, controller);
     translateWithConfiguredProvider(message, controller.signal).then(
       (lines) => sendResponse({ ok: true, lines }),
+      (error) => sendResponse({ ok: false, error: error?.message || String(error) })
+    ).finally(() => {
+      if (requestId) providerRequestControllers.delete(requestId);
+    });
+    return true;
+  }
+
+  if (sender.tab && message?.type === "LABEL_SPEAKERS") {
+    const requestId = String(message.requestId || "");
+    const controller = new AbortController();
+    if (requestId) providerRequestControllers.set(requestId, controller);
+    (async () => {
+      const config = await loadRuntimeConfig();
+      if ((await providerSelections(config)).voiceMode !== "multi") {
+        throw new Error("Multi-voice mode is off.");
+      }
+      if (!Array.isArray(message.lines) || !message.lines.length ||
+          message.lines.length > (config.speakerDetection?.chunkSize ?? 24)) {
+        throw new Error("Invalid speaker batch size.");
+      }
+      return SubToVoiceProviderRuntime.labelSpeakers(
+        config.translation, message.lines, message.context || [], controller.signal
+      );
+    })().then(
+      (labels) => sendResponse({ ok: true, labels }),
       (error) => sendResponse({ ok: false, error: error?.message || String(error) })
     ).finally(() => {
       if (requestId) providerRequestControllers.delete(requestId);
@@ -324,6 +365,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       const config = await loadRuntimeConfig();
       const selections = await providerSelections(config);
+      const profile = SubToVoiceProviderRuntime.ttsProfile(config.tts, selections.tts);
       const tabId = Number(message.tabId);
       const tab = Number.isInteger(tabId) ? await chrome.tabs.get(tabId) : null;
       sendResponse({
@@ -334,8 +376,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         error: state.tabId === tabId ? state.errorMessage : "",
         originalVolume: await originalVolumeSetting(config),
         translationSelection: selections.translation,
-        ttsSelection: selections.tts
+        ttsSelection: selections.tts,
+        voiceMode: selections.voiceMode,
+        speakers: selections.voiceMode === "multi" && Array.isArray(profile?.speakerVoices) && state.tabId === tabId
+          ? state.detectedSpeakers.map((label) => ({
+            label,
+            voice: SubToVoiceSpeakerCore.voiceForSpeaker(label, profile?.speakerVoices, profile?.voice) || ""
+          })) : []
       });
+    })().catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (!sender.tab && message?.type === "SET_VOICE_MODE") {
+    (async () => {
+      if (!["single", "multi"].includes(message.value)) throw new Error("Invalid voice mode.");
+      await chrome.storage.local.set({ voiceMode: message.value });
+      if (state.tabId && (state.running || state.starting)) {
+        const tab = await chrome.tabs.get(state.tabId);
+        await stopActiveSession("Changing voice mode");
+        await startInTab(tab);
+      }
+      sendResponse({ ok: true, voiceMode: message.value });
     })().catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
     return true;
   }

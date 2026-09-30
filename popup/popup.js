@@ -7,6 +7,9 @@ const status = document.getElementById("status");
 const downloadTranscript = document.getElementById("download-transcript");
 const translationProvider = document.getElementById("translation-provider");
 const ttsProvider = document.getElementById("tts-provider");
+const voiceMode = document.getElementById("voice-mode");
+const speakerPanel = document.getElementById("speaker-panel");
+const speakerList = document.getElementById("speaker-list");
 let tabId = null;
 let volumeTimer = null;
 let pendingVolume = Promise.resolve();
@@ -19,6 +22,15 @@ async function request(message) {
 
 function showError(error) {
   status.textContent = error?.message || String(error);
+}
+
+function renderSpeakers(state) {
+  speakerPanel.hidden = state.voiceMode !== "multi";
+  if (speakerPanel.hidden) return;
+  const speakers = Array.isArray(state.speakers) ? state.speakers : [];
+  speakerList.textContent = speakers.length
+    ? speakers.map(({ label, voice }) => `${label}${voice ? ` — ${voice}` : ""}`).join("\n")
+    : "Chưa nhận diện người nói.";
 }
 
 async function initialize() {
@@ -37,6 +49,9 @@ async function initialize() {
     ttsProvider.value = state.ttsSelection || "vieneu";
     translationProvider.disabled = false;
     ttsProvider.disabled = false;
+    voiceMode.value = state.voiceMode || "single";
+    voiceMode.disabled = false;
+    renderSpeakers(state);
   } catch (error) {
     showError(error);
   }
@@ -48,6 +63,8 @@ async function refreshStatus() {
     const state = await request({ type: "GET_POPUP_STATE", tabId });
     enabled.checked = Boolean(state.enabled);
     status.textContent = state.error || state.status;
+    voiceMode.value = state.voiceMode || "single";
+    renderSpeakers(state);
   } catch (error) {
     showError(error);
   }
@@ -107,6 +124,19 @@ for (const [element, kind] of [[translationProvider, "translation"], [ttsProvide
     }
   });
 }
+
+voiceMode.addEventListener("change", async () => {
+  voiceMode.disabled = true;
+  try {
+    await request({ type: "SET_VOICE_MODE", value: voiceMode.value });
+    await refreshStatus();
+  } catch (error) {
+    showError(error);
+    await initialize();
+  } finally {
+    voiceMode.disabled = false;
+  }
+});
 
 downloadTranscript.addEventListener("click", async () => {
   downloadTranscript.disabled = true;

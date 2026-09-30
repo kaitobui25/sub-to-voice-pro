@@ -8,11 +8,12 @@ const vm = require("node:vm");
 
 test("popup switch controls dubbing while volume is saved separately", async () => {
   const elements = new Map();
-  for (const id of ["enabled", "original-volume", "volume-value", "status", "download-transcript", "translation-provider", "tts-provider"]) {
+  for (const id of ["enabled", "original-volume", "volume-value", "status", "download-transcript", "translation-provider", "tts-provider", "voice-mode", "speaker-panel", "speaker-list"]) {
     elements.set(id, { checked: false, disabled: true, value: "", textContent: "", handlers: {},
       addEventListener(type, handler) { this.handlers[type] = handler; } });
   }
   const calls = [];
+  let popupVoiceMode = "single";
   const context = {
     document: { getElementById(id) { return elements.get(id); } },
     chrome: {
@@ -23,11 +24,15 @@ test("popup switch controls dubbing while volume is saved separately", async () 
           calls.push(message);
           if (message.type === "GET_POPUP_STATE") return {
             ok: true, enabled: false, canStart: true, status: "Ready", originalVolume: 18,
-            translationSelection: "google", ttsSelection: "vieneu"
+            translationSelection: "google", ttsSelection: "vieneu", voiceMode: popupVoiceMode,
+            speakers: popupVoiceMode === "multi" ? [
+              { label: "S1", voice: "Hải Đăng" }, { label: "S2", voice: "Thái Sơn" }
+            ] : []
           };
           if (message.type === "SET_ENABLED") return {
             ok: true, enabled: message.enabled, status: "Translating"
           };
+          if (message.type === "SET_VOICE_MODE") popupVoiceMode = message.value;
           return { ok: true, originalVolume: message.volume };
         }
       }
@@ -44,6 +49,8 @@ test("popup switch controls dubbing while volume is saved separately", async () 
   assert.equal(volume.value, 18);
   assert.equal(elements.get("translation-provider").value, "google");
   assert.equal(elements.get("tts-provider").value, "vieneu");
+  assert.equal(elements.get("voice-mode").value, "single");
+  assert.equal(elements.get("speaker-panel").hidden, true);
 
   volume.value = "35";
   volume.handlers.change();
@@ -69,4 +76,12 @@ test("popup switch controls dubbing while volume is saved separately", async () 
   await tts.handlers.change();
   assert.equal(calls.at(-2).kind, "tts");
   assert.equal(calls.at(-2).value, "gemini");
+
+  const voiceMode = elements.get("voice-mode");
+  voiceMode.value = "multi";
+  await voiceMode.handlers.change();
+  assert.equal(calls.at(-2).type, "SET_VOICE_MODE");
+  assert.equal(calls.at(-2).value, "multi");
+  assert.equal(elements.get("speaker-panel").hidden, false);
+  assert.equal(elements.get("speaker-list").textContent, "S1 — Hải Đăng\nS2 — Thái Sơn");
 });

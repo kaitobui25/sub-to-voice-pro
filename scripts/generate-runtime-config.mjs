@@ -90,6 +90,7 @@ const ttsProfiles = {
       baseUrl: config.vieneu_tts?.base_url,
       model: config.vieneu_tts?.model,
       voice: config.vieneu_tts?.voice,
+      speakerVoices: config.vieneu_tts?.speaker_voices || [],
       sampleRate: config.vieneu_tts?.sample_rate,
       maxConcurrency: config.vieneu_tts?.max_concurrency,
       busyRetryTimeoutMs: config.vieneu_tts?.busy_retry_timeout_ms,
@@ -140,6 +141,10 @@ const runtimeConfig = {
     sourceLanguage: config.translation?.source_language || "auto",
     targetLanguage: config.translation?.target_language || "vi",
     apiKey: geminiApiKey
+  },
+  speakerDetection: {
+    chunkSize: config.speaker_detection?.chunk_size || 24,
+    contextSize: config.speaker_detection?.context_size || 8
   },
   tts: ttsConfig,
   audio: {
