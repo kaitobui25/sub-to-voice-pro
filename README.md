@@ -2,6 +2,29 @@
 
 Chrome Manifest V3 subtitle-first dubbing for normal, non-live YouTube VODs that already have captions.
 
+## Bắt đầu nhanh (Windows + Chrome)
+
+Cần Git, Node.js/npm, `uv` và một Gemini API key. Chạy trong PowerShell:
+
+    git clone https://github.com/kaitobui25/sub-to-voice-pro.git
+    cd sub-to-voice-pro
+    Copy-Item .env.example .env
+
+Mở `.env`, điền `GEMINI_API_KEY1`, rồi cài VieNeu và tạo cấu hình extension:
+
+    New-Item -ItemType Directory -Force ..\tools
+    git clone https://github.com/pnnbao97/VieNeu-TTS.git ..\tools\VieNeu-TTS
+    Push-Location ..\tools\VieNeu-TTS
+    uv sync
+    Pop-Location
+    npm run config
+
+Vào `chrome://extensions` → bật **Developer mode** → **Load unpacked** → chọn thư mục `sub-to-voice-pro`. Lấy ID extension ở trang đó, rồi chạy:
+
+    npm run vieneu:install-host -- <extension-id>
+
+Reload extension, mở video YouTube có phụ đề và bật công tắc trong popup. VieNeu sẽ tự khởi động. Nếu đã có `..\tools\VieNeu-TTS`, bỏ qua lệnh clone và chạy `uv sync` trong thư mục đó. Chi tiết và lệnh kiểm tra nằm bên dưới.
+
 The MVP follows the locked Echoly baseline in docs/ECHOLY_BASELINE.md:
 
 - YouTube captions -> JSON3 -> sentence regroup/dedupe
