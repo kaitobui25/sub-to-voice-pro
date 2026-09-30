@@ -393,6 +393,7 @@
       rows: current.sentences.map((sentence, index) => ({
         sortAt: sentence.start,
         originals: groups[index].filter(inWindow),
+        processed: sentence.text,
         translation: current.translations[index] || null,
         audio: current.audioTimings.filter((item) =>
           item.index === index && !item.discarded &&
@@ -404,7 +405,7 @@
           text: current.translations[index]
         })).filter((item) => item.end > item.start)
       })).filter((row, index) => inWindow(current.sentences[index])).concat(orphans.filter(inWindow).map((caption) => ({
-        sortAt: caption.start, originals: [caption], translation: null, audio: []
+        sortAt: caption.start, originals: [caption], processed: null, translation: null, audio: []
       }))).sort((a, b) => a.sortAt - b.sortAt)
     };
   }
