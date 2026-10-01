@@ -228,6 +228,94 @@ test("Gemini adapter rejects response JSON without a lines array", async () => {
   );
 });
 
+test("Gemini speaker mode sends response schema and retries an invalid primary response", async () => {
+  const modelsSeen = [];
+  let fallbackBody = null;
+  const schema = {
+    type: "OBJECT",
+    properties: { lines: { type: "ARRAY", items: { type: "STRING" } } },
+    required: ["lines"]
+  };
+  const provider = createGeminiProvider({
+    baseUrl: "https://speaker-schema.test/v1beta",
+    apiKey: "test-secret",
+    models: ["primary", "fallback"],
+    temperature: 0,
+    responseSchema: schema,
+    retryInvalidResponse: true,
+    preferFirstModel: true,
+    validateOutput(lines) {
+      if (lines.length !== 2 || lines[0] !== "1 S1" || lines[1] !== "2 S2") {
+        throw new Error("invalid speaker output");
+      }
+      return ["S1", "S2"];
+    },
+    fetchImpl: async (url, options) => {
+      const model = decodeURIComponent(url.match(/\/models\/([^:]+):generateContent$/)[1]);
+      modelsSeen.push(model);
+      const body = JSON.parse(options.body);
+      if (model === "primary") {
+        return { ok: true, status: 200, async json() {
+          return { candidates: [{ content: { parts: [{ text: '{"lines":["1 S1"]}' }] } }] };
+        } };
+      }
+      fallbackBody = body;
+      return { ok: true, status: 200, async json() {
+        return { candidates: [{ content: { parts: [{ text: '{"lines":["1 S1","2 S2"]}' }] } }] };
+      } };
+    }
+  });
+
+  assert.deepEqual(await provider.translateBatch({ prompt: "speaker prompt" }), ["S1", "S2"]);
+  assert.deepEqual(modelsSeen, ["primary", "fallback"]);
+  assert.equal(fallbackBody.generationConfig.temperature, 0);
+  assert.deepEqual(fallbackBody.generationConfig.responseSchema, schema);
+});
+
+test("Gemini speaker primary-first mode does not round-robin successful requests", async () => {
+  const seen = [];
+  const provider = createGeminiProvider({
+    baseUrl: "https://speaker-primary.test/v1beta", apiKey: "test-secret",
+    models: ["fast-primary", "slow-fallback"], preferFirstModel: true,
+    fetchImpl: async (url) => {
+      seen.push(decodeURIComponent(url.match(/\/models\/([^:]+):generateContent$/)[1]));
+      return { ok: true, status: 200, async json() {
+        return { candidates: [{ content: { parts: [{ text: '{"lines":["ok"]}' }] } }] };
+      } };
+    }
+  });
+  await provider.translateBatch({ prompt: "first" });
+  await provider.translateBatch({ prompt: "second" });
+  assert.deepEqual(seen, ["fast-primary", "fast-primary"]);
+});
+
+test("Gemini speaker mode falls back when one model attempt times out", async () => {
+  const seen = [];
+  const provider = createGeminiProvider({
+    baseUrl: "https://speaker-timeout.test/v1beta", apiKey: "test-secret",
+    models: ["slow-primary", "fast-fallback"], preferFirstModel: true,
+    retryInvalidResponse: true, attemptTimeoutMs: 5,
+    fetchImpl: async (url, options) => {
+      const model = decodeURIComponent(url.match(/\/models\/([^:]+):generateContent$/)[1]);
+      seen.push(model);
+      if (model === "slow-primary") {
+        return await new Promise((resolve, reject) => {
+          options.signal.addEventListener("abort", () => {
+            const error = new Error("aborted");
+            error.name = "AbortError";
+            reject(error);
+          }, { once: true });
+        });
+      }
+      return { ok: true, status: 200, async json() {
+        return { candidates: [{ content: { parts: [{ text: '{"lines":["ok"]}' }] } }] };
+      } };
+    }
+  });
+  assert.deepEqual(await provider.translateBatch({ prompt: "speaker" }), ["ok"]);
+  assert.deepEqual(seen, ["slow-primary", "fast-fallback"]);
+});
+
 test("Gemini adapter falls back to the next configured translation model on 429", async () => {
   const modelsSeen = [];
   const provider = createGeminiProvider({
