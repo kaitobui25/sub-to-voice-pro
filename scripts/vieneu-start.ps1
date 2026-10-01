@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\..\tools\VieNeu-TTS"))
 $artifactDir = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\artifacts"))
@@ -31,7 +31,17 @@ $env:VIENEU_MAX_STREAMS = "1"
 $env:HOST = "127.0.0.1"
 $env:PORT = "8000"
 
-$process = Start-Process -FilePath "uv" -ArgumentList @("run", "python", "-m", "apps.openai_speech") -WorkingDirectory $repo -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
+$uv = Get-Command "uv" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1
+if (-not $uv) {
+  $userUv = Join-Path $env:USERPROFILE ".local\bin\uv.exe"
+  if (Test-Path -LiteralPath $userUv) { $uv = $userUv }
+}
+if (-not $uv) {
+  throw "uv.exe was not found. Install uv or add it to PATH."
+}
+
+$process = Start-Process -FilePath $uv -ArgumentList @("run", "python", "-m", "apps.openai_speech") -WorkingDirectory $repo -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
 $process.Id | Set-Content -LiteralPath (Join-Path $artifactDir "vieneu-server.pid")
 Write-Output "VieNeu-TTS starting on http://127.0.0.1:8000 (launcher PID $($process.Id))."
 Write-Output "Check readiness with: npm run vieneu:health"
+
