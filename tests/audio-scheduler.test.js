@@ -79,6 +79,39 @@ test("scheduleWindow does not schedule one sentence twice", () => {
   assert.equal(audioCtx.created.length, 1);
 });
 
+test("a naturally completed cue is not scheduled again until playback history is reset", () => {
+  const audioCtx = fakeAudioContext(5);
+  const session = {
+    audioCtx,
+    outputGain: {},
+    audioOffset: 0,
+    sentences: [{ start: 6, end: 7, _buffer: { duration: 1 } }],
+    pendingSources: []
+  };
+  const [first] = scheduleWindow(session, 0, 1);
+  first.source.onended();
+  assert.equal(session.playedSentenceIndexes.has(0), true);
+  assert.equal(scheduleWindow(session, 0, 1).length, 0);
+  session.playedSentenceIndexes.clear();
+  assert.equal(scheduleWindow(session, 0, 1).length, 1);
+});
+
+test("cancelling a pending cue does not mark it as played", () => {
+  const audioCtx = fakeAudioContext(5);
+  const session = {
+    audioCtx,
+    outputGain: {},
+    audioOffset: 0,
+    sentences: [{ start: 6, end: 7, _buffer: { duration: 1 } }],
+    pendingSources: []
+  };
+  const [first] = scheduleWindow(session, 0, 1);
+  cancelPendingSources(session);
+  first.source.onended();
+  assert.equal(session.playedSentenceIndexes.has(0), false);
+  assert.equal(scheduleWindow(session, 0, 1).length, 1);
+});
+
 test("scheduleWindow exposes the actual audio start and decoded duration", () => {
   const audioCtx = fakeAudioContext(5);
   const session = {
@@ -108,6 +141,22 @@ test("adjacent TTS audio waits for the previous audio across scheduling windows"
   assert.equal(first.playAt, 100.02);
   assert.equal(second.playAt, first.playAt + first.duration);
   assert.equal(third.playAt, second.playAt + second.duration);
+});
+
+test("a cue late by wall clock still appends while dubbed audio is already queued", () => {
+  const audioCtx = fakeAudioContext(20);
+  const session = {
+    audioCtx, outputGain: {}, audioOffset: 5,
+    scheduledAudioEndAt: 24,
+    sentences: [{ start: 10, end: 11, _buffer: { duration: 2 } }],
+    pendingSources: []
+  };
+  const decisions = [];
+  const [item] = scheduleWindow(session, 0, 1, {
+    onDecision: (decision) => decisions.push(decision)
+  });
+  assert.equal(item.playAt, 24);
+  assert.equal(decisions[0].status, "scheduled");
 });
 
 test("cancelling scheduled audio clears the wait before scheduling after a seek", () => {
