@@ -107,7 +107,9 @@ test("Stop then Start reuses captions already fetched for the same video", async
   multiVoice = true;
   assert.equal((await send("CONTENT_START")).ok, true);
   assert.equal(fetchCount, 1);
-  assert.equal(JSON.stringify(speakerRequests), "[[3]]");
+  // Multi-voice restart labels the complete transcript once, then playback
+  // reuses the cached labels instead of calling Gemini in rolling waves.
+  assert.equal(JSON.stringify(speakerRequests), "[[1,2,3]]");
   assert.equal(synthesisSpeakers.at(-1), "S1");
   video.currentTime = 40.4;
   const restartedTranscript = (await send("CONTENT_GET_TRANSCRIPT")).transcript;

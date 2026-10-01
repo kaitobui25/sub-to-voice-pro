@@ -412,6 +412,8 @@
       videoId: current.videoId,
       windowStart: startedAt,
       windowEnd: now,
+      speakerRequestCount: current.speakerRequestCount || 0,
+      speakerFallbackBatchCount: current.speakerFallbackBatchCount || 0,
       rows: current.sentences.map((sentence, index) => ({
         sortAt: sentence.start,
         start: sentence.start,
@@ -468,62 +470,218 @@
     }
   }
 
-  async function labelSpeakerWave(current, startIdx, endIdx, startupOnly = false) {
-    if (!current.settings.multiVoice || current.speakerLabelingUnavailable) return;
-    const chunkSize = Math.max(1, Math.floor(current.settings.speakerChunkSize || 24));
-    const contextSize = Math.max(0, Math.floor(current.settings.speakerContextSize || 8));
-    const target = startupOnly ? endIdx
-      : Math.min(current.sentences.length, Math.max(endIdx, startIdx + chunkSize));
-    for (let start = startIdx; start < target;) {
-      if (current !== session || current.stopFlag) return;
-      if (current.speakers[start]) {
-        start += 1;
-        continue;
+  function normalizeSpeakerLabel(current, rawLabel) {
+    const voiceCount = Math.max(0, Math.floor(current.settings.speakerVoiceCount || 0));
+    const match = String(rawLabel || "").match(/^S([1-9]\d*)$/);
+    return match && voiceCount > 0
+      ? "S" + (((Number(match[1]) - 1) % voiceCount) + 1)
+      : rawLabel;
+  }
+
+  function emitDetectedSpeakers(current) {
+    emitState({ detectedSpeakers: [...new Set(current.speakers.filter((label) =>
+      /^S[1-9]\d*$/.test(label || "")))].sort((a, b) =>
+      Number(a.slice(1)) - Number(b.slice(1))) });
+  }
+
+  function applySpeakerLabels(current, start, labels, fallbackError) {
+    for (let offset = 0; offset < labels.length; offset += 1) {
+      const label = normalizeSpeakerLabel(current, labels[offset]);
+      current.speakers[start + offset] = label;
+      const trace = traceFor(current, start + offset);
+      trace.speaker = label;
+      trace.speakerEnd = traceTime(trace);
+      if (fallbackError) {
+        trace.speakerFallback = fallbackError;
+        delete trace.speakerError;
+      } else {
+        delete trace.speakerFallback;
+        delete trace.speakerError;
       }
-      const end = Math.min(start + chunkSize, target);
-      const lines = current.sentences.slice(start, end).map((sentence, offset) => ({
-        id: start + offset + 1, text: sentence.text
+    }
+    emitDetectedSpeakers(current);
+  }
+
+  function speakerMarker(text) {
+    const match = String(text || "").match(/^\s*([A-Za-z][A-Za-z0-9 .'-]{0,24}):\s*/);
+    return match ? match[1].trim().toLowerCase() : "";
+  }
+
+  const SPEAKER_NAME_STOPWORDS = new Set([
+    "a", "an", "the", "fine", "glad", "happy", "ready", "sure", "here", "currently",
+    "recently", "really", "very", "looking", "going", "trying", "interested", "working"
+  ]);
+
+  function selfIntroductionName(text) {
+    const value = String(text || "");
+    const match = value.match(/\b(?:I'm|I am|my name is|this is)\s+([A-Za-z][A-Za-z'-]{1,24})\b/);
+    if (!match) return "";
+    const name = match[1].toLowerCase();
+    return SPEAKER_NAME_STOPWORDS.has(name) ? "" : name;
+  }
+
+  function questionCueIndex(text) {
+    const value = String(text || "").toLowerCase();
+    const patterns = [
+      /\bhow\b/, /\bwhat\b/, /\bwhy\b/, /\bwhen\b/, /\bwhere\b/, /\bwho\b/, /\bwhich\b/,
+      /\bcould you\b/, /\bwould you\b/, /\bcan you\b/, /\btell me\b/, /\bdo you\b/,
+      /\bdid you\b/, /\bhave you\b/, /\bare you\b/, /\bwere you\b/, /\bdescribe\b/,
+      /\bwalk me through\b/, /\bgive me\b/
+    ];
+    let found = -1;
+    for (const pattern of patterns) {
+      const match = pattern.exec(value);
+      if (match && (found === -1 || match.index < found)) found = match.index;
+    }
+    return found;
+  }
+
+  function fallbackSpeakerLabels(current, lines, context) {
+    const voiceCount = Math.max(1, Math.floor(current.settings.speakerVoiceCount || 1));
+    const markerLabels = current.speakerMarkerLabels ||= new Map();
+    const normalizeKnown = (label) => {
+      const normalized = normalizeSpeakerLabel(current, label);
+      return /^S[1-9]\d*$/.test(normalized || "") ? normalized : null;
+    };
+    const nextLabel = (label) => {
+      const match = String(label || "").match(/^S([1-9]\d*)$/);
+      const index = match ? Number(match[1]) : 1;
+      return "S" + ((index % voiceCount) + 1);
+    };
+
+    const assignIdentity = (identity) => {
+      if (!identity) return null;
+      if (markerLabels.has(identity)) return markerLabels.get(identity);
+      const used = new Set(markerLabels.values());
+      let label = null;
+      for (let index = 1; index <= voiceCount; index += 1) {
+        const candidate = "S" + index;
+        if (!used.has(candidate)) {
+          label = candidate;
+          break;
+        }
+      }
+      label ||= "S" + ((markerLabels.size % voiceCount) + 1);
+      markerLabels.set(identity, label);
+      return label;
+    };
+
+    for (const item of context) {
+      const marker = speakerMarker(item.text);
+      const label = normalizeKnown(item.speaker);
+      if (marker && label) markerLabels.set(marker, label);
+      const intro = selfIntroductionName(item.text);
+      if (intro && label) markerLabels.set(intro, label);
+    }
+
+    const previous = [...context].reverse().find((item) => normalizeKnown(item.speaker));
+    let active = previous ? normalizeKnown(previous.speaker) : "S1";
+    if (previous && /\?\s*$/.test(previous.text || "") && voiceCount > 1) {
+      active = nextLabel(active);
+    }
+
+    return lines.map((line) => {
+      const marker = speakerMarker(line.text);
+      const intro = selfIntroductionName(line.text);
+      let label = marker ? assignIdentity(marker) : intro ? assignIdentity(intro) : null;
+
+      if (!label && voiceCount > 1) {
+        const value = String(line.text || "").toLowerCase();
+        const directlyAddressed = [...markerLabels.entries()].find(([identity]) =>
+          identity && new RegExp("\\b" + identity.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i").test(value)
+        );
+        if (directlyAddressed) label = nextLabel(directlyAddressed[1]);
+      }
+
+      const questionAt = questionCueIndex(line.text);
+      if (!label && questionAt >= 0 && voiceCount > 1) {
+        // A question/request that appears after answer-like text usually marks
+        // a turn boundary inside YouTube's punctuation-free ASR sentence.
+        label = questionAt > 18 ? nextLabel(active) : active;
+      }
+
+      label ||= active;
+
+      // The next line after a question/request is normally the other speaker.
+      active = questionAt >= 0 && voiceCount > 1 ? nextLabel(label) : label;
+      return label;
+    });
+  }
+
+  function speakerContext(current, start) {
+    const contextSize = Math.max(0, Math.floor(current.settings.speakerContextSize || 16));
+    const contextStart = Math.max(0, start - contextSize);
+    return current.speakers.slice(contextStart, start)
+      .map((speaker, offset) => ({
+        id: contextStart + offset + 1,
+        text: current.sentences[contextStart + offset].text,
+        speaker
+      })).filter((item) => item.speaker);
+  }
+
+  function speakerBatch(current, start) {
+    const maxLines = Math.max(1, Math.floor(current.settings.speakerMaxLinesPerRequest || 600));
+    const maxPromptChars = Math.max(4000, Math.floor(current.settings.speakerMaxPromptChars || 60000));
+    const context = speakerContext(current, start);
+    const hardEnd = Math.min(current.sentences.length, start + maxLines);
+    let end = hardEnd;
+    let lines = [];
+    while (end > start) {
+      lines = current.sentences.slice(start, end).map((sentence, offset) => ({
+        id: start + offset + 1,
+        text: sentence.text
       }));
-      const context = current.speakers.slice(Math.max(0, start - contextSize), start)
-        .map((speaker, offset) => ({
-          id: Math.max(0, start - contextSize) + offset + 1,
-          text: current.sentences[Math.max(0, start - contextSize) + offset].text,
-          speaker
-        })).filter((item) => item.speaker);
-      for (let index = start; index < end; index += 1) {
+      // buildPrompt adds roughly 650 chars of fixed instructions. Keep a
+      // conservative margin so background-side prompt construction stays
+      // beneath maxPromptChars without loading speaker-core in the page.
+      const estimatedPromptChars = 900 + JSON.stringify(context).length + JSON.stringify(lines).length;
+      if (estimatedPromptChars <= maxPromptChars || end === start + 1) {
+        return { start, end, lines, context, estimatedPromptChars };
+      }
+      const nextCount = Math.max(1, Math.floor((end - start) * 0.8));
+      end = start + nextCount;
+    }
+    return { start, end: start, lines: [], context, estimatedPromptChars: 0 };
+  }
+
+  async function labelAllSpeakers(current) {
+    if (!current.settings.multiVoice) return;
+    const signal = current.prepareAbortController.signal;
+    for (let start = 0; start < current.sentences.length;) {
+      if (current !== session || current.stopFlag || signal.aborted) return;
+      const batch = speakerBatch(current, start);
+      if (batch.end <= start) throw new Error("Could not create a speaker-labeling batch.");
+      for (let index = batch.start; index < batch.end; index += 1) {
         const trace = traceFor(current, index);
         trace.speakerStart = traceTime(trace);
+        trace.speakerBatchStart = batch.start + 1;
+        trace.speakerBatchEnd = batch.end;
       }
-      const signal = current.prepareAbortController.signal;
       try {
+        current.speakerRequestCount = (current.speakerRequestCount || 0) + 1;
         const labels = await ProviderClient.labelSpeakers({
-          lines, context, signal
+          lines: batch.lines,
+          context: batch.context,
+          signal
         });
         if (current !== session || current.stopFlag || signal.aborted) return;
-        if (!Array.isArray(labels) || labels.length !== lines.length) throw new Error("Invalid speaker labels.");
-        for (let offset = 0; offset < labels.length; offset += 1) {
-          current.speakers[start + offset] = labels[offset];
-          const trace = traceFor(current, start + offset);
-          trace.speaker = labels[offset];
-          trace.speakerEnd = traceTime(trace);
-          delete trace.speakerError;
+        if (!Array.isArray(labels) || labels.length !== batch.lines.length) {
+          throw new Error("Invalid speaker labels.");
         }
-        const speakerDuration = traceFor(current, start).speakerEnd - traceFor(current, start).speakerStart;
-        current.estimatedSpeakerSeconds = current.estimatedSpeakerSeconds == null
-          ? speakerDuration : current.estimatedSpeakerSeconds * 0.75 + speakerDuration * 0.25;
-        emitState({ detectedSpeakers: [...new Set(current.speakers.filter((label) =>
-          /^S[1-9]\d*$/.test(label || "")))].sort((a, b) =>
-          Number(a.slice(1)) - Number(b.slice(1))) });
-        start = end;
+        applySpeakerLabels(current, batch.start, labels);
       } catch (error) {
         if (signal.aborted) return;
-        for (let index = start; index < end; index += 1) {
-          traceFor(current, index).speakerError = error?.message || String(error);
-        }
-        current.speakerLabelingUnavailable = true;
-        console.warn("Speaker labeling unavailable; using the default voice.", error);
-        return;
+        const message = error?.message || String(error);
+        applySpeakerLabels(
+          current,
+          batch.start,
+          fallbackSpeakerLabels(current, batch.lines, batch.context),
+          message
+        );
+        current.speakerFallbackBatchCount = (current.speakerFallbackBatchCount || 0) + 1;
+        console.warn("Full-transcript speaker labeling batch failed; using bounded fallback.", error);
       }
+      start = batch.end;
     }
   }
 
@@ -603,7 +761,8 @@
             void current.video.play().catch(() => {});
           } else if (!current.video.paused) {
             recordScheduledAudio(current, scheduleWithTrace(current, index, index + 1));
-            if (index === current.nextAudioIndex && current.scheduledSentenceIndexes.has(index)) {
+            if (index === current.nextAudioIndex &&
+                (current.scheduledSentenceIndexes.has(index) || current.playedSentenceIndexes.has(index))) {
               current.nextAudioIndex += 1;
             }
           }
@@ -623,6 +782,10 @@
     const index = current.nextAudioIndex;
     const sentence = current.sentences[index];
     if (!sentence || sentence.start > now + 0.5 || current.waitingForAudio != null) return;
+    if (current.playedSentenceIndexes.has(index)) {
+      current.nextAudioIndex += 1;
+      return;
+    }
     if (current.scheduledSentenceIndexes.has(index)) {
       current.nextAudioIndex += 1;
       return;
@@ -630,6 +793,10 @@
     if (sentence._buffer) {
       recordScheduledAudio(current, scheduleWithTrace(current, index, index + 1));
       if (current.scheduledSentenceIndexes.has(index)) {
+        current.nextAudioIndex += 1;
+      } else if (sentence.start < now - AudioScheduler.LATE_CUE_THRESHOLD_SEC) {
+        // The scheduler intentionally drops materially late cues. Waiting for
+        // one can never succeed because it only becomes later while paused.
         current.nextAudioIndex += 1;
       } else {
         current.waitingForAudio = index;
@@ -652,6 +819,9 @@
     while (current === session && !current.stopFlag) {
       await new Promise((resolve) => setTimeout(resolve, current.settings.multiVoice ? 250 : 1000));
       if (current !== session || current.stopFlag) return;
+      // A scheduler-induced pause is not a user pause. Keep rendering while
+      // waiting so the missing sentence can be translated and synthesized;
+      // otherwise multi-voice can deadlock at the first uncached cue.
       if (current.paused && current.waitingForAudio == null) {
         updateLiveDisplay(current);
         continue;
@@ -662,18 +832,20 @@
       }
 
       const videoTime = current.video.currentTime;
+      const renderBatchSize = Math.max(1, Math.floor(
+        current.settings.renderBatchSize ?? current.settings.speakerChunkSize ?? 8
+      ));
       const multiLookahead = current.settings.multiVoice ? Math.min(
         current.settings.multiVoiceMaxLookaheadSeconds ?? 120,
         Math.max(current.settings.multiVoiceLookaheadSeconds ?? 60,
-          (current.estimatedTtsSeconds || 0) * current.settings.speakerChunkSize +
-          (current.estimatedSpeakerSeconds || 0))
+          (current.estimatedTtsSeconds || 0) * renderBatchSize)
       ) : 0;
       const horizon = videoTime + (current.settings.multiVoice
         ? multiLookahead : AudioScheduler.LOOKAHEAD_MS / 1000);
       let targetIdx = current.sentences.findIndex((sentence) => sentence.start > horizon);
       if (targetIdx === -1) targetIdx = current.sentences.length;
       if (current.settings.multiVoice) {
-        targetIdx = Math.min(targetIdx, current.renderCursor + current.settings.speakerChunkSize);
+        targetIdx = Math.min(targetIdx, current.renderCursor + renderBatchSize);
       }
       if (targetIdx <= current.renderCursor) {
         updateLiveDisplay(current);
@@ -688,12 +860,7 @@
           (value, index) => index >= start && index < end && !value
         );
         if (firstUntranslated !== -1) {
-          await Promise.all([
-            translateBatch(current, firstUntranslated, end),
-            labelSpeakerWave(current, start, end)
-          ]);
-        } else {
-          await labelSpeakerWave(current, start, end);
+          await translateBatch(current, firstUntranslated, end);
         }
         if (current !== session || current.stopFlag) return;
         if (seekGeneration !== current.seekGeneration) continue;
@@ -719,7 +886,10 @@
   }
 
   function firstWaveBounds(sentences, currentTime) {
-    let start = sentences.findIndex((sentence) => sentence.start >= currentTime);
+    // Include a caption that is already active at the playhead. onPlay uses
+    // the same end>=playhead rule; preparing a different window here can make
+    // nextAudioIndex point behind renderCursor to a cue that was never TTS'd.
+    let start = sentences.findIndex((sentence) => sentence.end >= currentTime);
     if (start === -1) start = sentences.length;
     const horizon = currentTime + (AudioScheduler.LOOKAHEAD_MS / 1000);
     let lookaheadEnd = sentences.findIndex((sentence) => sentence.start > horizon);
@@ -778,7 +948,9 @@
       translations: [],
       diagnostics: [],
       speakers: [],
-      speakerLabelingUnavailable: false,
+      speakerRequestCount: 0,
+      speakerFallbackBatchCount: 0,
+      speakerMarkerLabels: new Map(),
       renderAbortController: new AbortController(),
       renderTail: Promise.resolve(),
       seekGeneration: 0,
@@ -788,10 +960,11 @@
       audioTimingBySource: new WeakMap(),
       pendingSources: [],
       scheduledSentenceIndexes: new Set(),
+      playedSentenceIndexes: new Set(),
       audioOffset: 0,
       renderCursor: 0,
       stopFlag: false,
-      paused: false,
+      paused: video.paused,
       startupPreparing: true,
       source: null,
       wasPlaying: !video.paused,
@@ -856,10 +1029,10 @@
     }
 
     try {
-      setProbe("Translating first wave…");
+      setProbe(current.settings.multiVoice ? "Identifying speakers…" : "Translating first wave…");
       await Promise.all([
         translateBatch(current, firstWave.start, firstWave.end),
-        labelSpeakerWave(current, firstWave.start, firstWave.end, current.settings.multiVoice)
+        labelAllSpeakers(current)
       ]);
       if (current !== session || current.stopFlag) return { ok: false, error: "Cancelled." };
       setProbe("Preparing voices…");
@@ -945,7 +1118,8 @@
       recordScheduledAudio(current, window.scheduled);
       if (current.settings.multiVoice) {
         current.nextAudioIndex = waitingIndex != null ? waitingIndex + 1 : window.start;
-        while (current.scheduledSentenceIndexes.has(current.nextAudioIndex)) current.nextAudioIndex += 1;
+        while (current.scheduledSentenceIndexes.has(current.nextAudioIndex) ||
+               current.playedSentenceIndexes.has(current.nextAudioIndex)) current.nextAudioIndex += 1;
       }
       if (!current.settings.multiVoice && window.start < current.renderCursor) {
         current.renderCursor = window.start;
@@ -958,6 +1132,7 @@
       const wasWaitingForAudio = current.waitingForAudio != null;
       discardPendingAudio(current);
       AudioScheduler.cancelPendingSources(current);
+      current.playedSentenceIndexes.clear();
       if (current.settings.multiVoice) {
         current.seekGeneration += 1;
         current.prepareAbortController.abort();
@@ -978,7 +1153,8 @@
       if (current.settings.multiVoice) {
         current.renderCursor = window.start;
         current.nextAudioIndex = window.start;
-        while (current.scheduledSentenceIndexes.has(current.nextAudioIndex)) current.nextAudioIndex += 1;
+        while (current.scheduledSentenceIndexes.has(current.nextAudioIndex) ||
+               current.playedSentenceIndexes.has(current.nextAudioIndex)) current.nextAudioIndex += 1;
       } else if (window.start < current.renderCursor) current.renderCursor = window.start;
       updateLiveDisplay(current);
       if (wasWaitingForAudio) void current.video.play().catch(() => {});
@@ -999,10 +1175,13 @@
       try { await video.play(); } catch {}
     }
     current.startupPreparing = false;
-    setProbe("Translating");
-    emitState({ running: true, status: "Translating", errorMessage: "" });
+    const startupPaused = video.paused;
+    current.paused = startupPaused;
+    const startupStatus = startupPaused ? "Paused" : "Translating";
+    setProbe(startupStatus);
+    emitState({ running: true, paused: startupPaused, status: startupStatus, errorMessage: "" });
     void runRollingRenderer(current);
-    return { ok: true, status: "Translating", count: sentences.length };
+    return { ok: true, status: startupStatus, count: sentences.length };
   }
 
   function stopSession(reason, remove, notify) {

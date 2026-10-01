@@ -30,8 +30,15 @@ translation:
     - microsoft
 
 speaker_detection:
-  chunk_size: 24
-  context_size: 8
+  render_batch_size: 8
+  max_lines_per_request: 600
+  max_prompt_chars: 60000
+  context_size: 16
+  timeout_ms: 25000
+  model_timeout_ms: 10000
+  models:
+    - gemini-3.5-flash-lite
+    - gemini-3.1-flash-lite
   lookahead_seconds: 60
   max_lookahead_seconds: 120
 
@@ -70,8 +77,7 @@ vieneu_tts:
   voice: Hải Đăng
   speaker_voices:
     - Hải Đăng
-    - Thái Sơn
-    - Quang Sơn
+    - Trúc Ly
   sample_rate: 48000
   max_concurrency: 1
   busy_retry_timeout_ms: 120000

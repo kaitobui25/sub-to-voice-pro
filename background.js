@@ -71,7 +71,10 @@ function publicRuntimeSettings(config, selections) {
     voiceVolume: config.audio?.voiceVolume ?? 100,
     ttsProvider: selections.tts,
     multiVoice: selections.voiceMode === "multi" && Array.isArray(profile?.speakerVoices) && profile.speakerVoices.length > 1,
-    speakerChunkSize: config.speakerDetection?.chunkSize ?? 24,
+    speakerVoiceCount: Array.isArray(profile?.speakerVoices) ? profile.speakerVoices.length : 0,
+    renderBatchSize: config.speakerDetection?.renderBatchSize ?? config.speakerDetection?.chunkSize ?? 8,
+    speakerMaxLinesPerRequest: config.speakerDetection?.maxLinesPerRequest ?? 600,
+    speakerMaxPromptChars: config.speakerDetection?.maxPromptChars ?? 60000,
     speakerContextSize: config.speakerDetection?.contextSize ?? 8,
     multiVoiceLookaheadSeconds: config.speakerDetection?.lookaheadSeconds ?? 60,
     multiVoiceMaxLookaheadSeconds: config.speakerDetection?.maxLookaheadSeconds ?? 120,
@@ -310,6 +313,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.tab && message?.type === "LABEL_SPEAKERS") {
     const requestId = String(message.requestId || "");
     const controller = new AbortController();
+    let timeoutId = null;
+    let timedOut = false;
     if (requestId) providerRequestControllers.set(requestId, controller);
     (async () => {
       const config = await loadRuntimeConfig();
@@ -317,16 +322,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         throw new Error("Multi-voice mode is off.");
       }
       if (!Array.isArray(message.lines) || !message.lines.length ||
-          message.lines.length > (config.speakerDetection?.chunkSize ?? 24)) {
+          message.lines.length > (config.speakerDetection?.maxLinesPerRequest ?? 600)) {
         throw new Error("Invalid speaker batch size.");
       }
+      const timeoutMs = Math.max(1000, Number(config.speakerDetection?.timeoutMs || 25000));
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
       return SubToVoiceProviderRuntime.labelSpeakers(
-        config.translation, message.lines, message.context || [], controller.signal
+        config.translation, config.speakerDetection || {},
+        message.lines, message.context || [], controller.signal
       );
     })().then(
       (labels) => sendResponse({ ok: true, labels }),
-      (error) => sendResponse({ ok: false, error: error?.message || String(error) })
+      (error) => sendResponse({
+        ok: false,
+        error: timedOut ? "Speaker labeling timed out." : (error?.message || String(error))
+      })
     ).finally(() => {
+      if (timeoutId != null) clearTimeout(timeoutId);
       if (requestId) providerRequestControllers.delete(requestId);
     });
     return true;

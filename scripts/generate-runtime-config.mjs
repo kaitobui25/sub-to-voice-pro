@@ -143,8 +143,13 @@ const runtimeConfig = {
     apiKey: geminiApiKey
   },
   speakerDetection: {
-    chunkSize: config.speaker_detection?.chunk_size || 24,
-    contextSize: config.speaker_detection?.context_size || 8,
+    renderBatchSize: config.speaker_detection?.render_batch_size || 8,
+    maxLinesPerRequest: config.speaker_detection?.max_lines_per_request || 600,
+    maxPromptChars: config.speaker_detection?.max_prompt_chars || 60000,
+    contextSize: config.speaker_detection?.context_size || 16,
+    timeoutMs: config.speaker_detection?.timeout_ms || 25000,
+    modelTimeoutMs: config.speaker_detection?.model_timeout_ms || 10000,
+    models: config.speaker_detection?.models || config.translation?.models || [],
     lookaheadSeconds: config.speaker_detection?.lookahead_seconds || 60,
     maxLookaheadSeconds: config.speaker_detection?.max_lookahead_seconds || 120
   },

@@ -15,11 +15,12 @@ test("speaker prompt has numbered lines and requests only ID-label pairs", () =>
   assert.throws(() => parseLabels(["6 S1", "5 S2"], lines), /Invalid speaker label/);
 });
 
-test("configured voices map by speaker while unknown speakers use the default", () => {
+test("configured voices cycle by speaker while unknown labels use the default", () => {
   const voices = ["North male", "South male", "Central male"];
   assert.equal(voiceForSpeaker("S1", voices, "default"), voices[0]);
   assert.equal(voiceForSpeaker("S2", voices, "default"), voices[1]);
   assert.equal(voiceForSpeaker("S3", voices, "default"), voices[2]);
-  assert.equal(voiceForSpeaker("S4", voices, "default"), "default");
+  assert.equal(voiceForSpeaker("S4", voices, "default"), voices[0]);
+  assert.equal(voiceForSpeaker("S5", ["A", "B"], "default"), "A");
   assert.equal(voiceForSpeaker("U", voices, "default"), "default");
 });
