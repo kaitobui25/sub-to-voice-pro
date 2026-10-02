@@ -14,13 +14,14 @@ test("Stop then Start reuses captions already fetched for the same video", async
   const script = {
     textContent: "var ytInitialPlayerResponse = " + JSON.stringify({
       captions: { playerCaptionsTracklistRenderer: { captionTracks: [{
-        languageCode: "en", kind: "asr", baseUrl: "https://www.youtube.com/api/timedtext?v=test-video&kind=asr"
+        languageCode: "en", kind: "asr", baseUrl: "https://www.youtube.com/api/timedtext?v=test-video&kind=asr&fmt=srv3"
       }] } }
     }) + ";"
   };
   const probe = { querySelector: () => ({ textContent: "" }), remove() {} };
   let messageHandler;
   let fetchCount = 0;
+  let fetchedCaptionUrl = "";
   let multiVoice = false;
   const speakerRequests = [];
   const synthesisSpeakers = [];
@@ -43,8 +44,9 @@ test("Stop then Start reuses captions already fetched for the same video", async
       onMessage: { addListener(handler) { messageHandler = handler; } },
       sendMessage(message, callback) { if (callback) callback(null); else return Promise.resolve(); }
     } },
-    fetch: async () => {
+    fetch: async (url) => {
       fetchCount += 1;
+      fetchedCaptionUrl = String(url);
       if (fetchCount > 1) throw new Error("YouTube did not serve captions again");
       return { ok: true, async json() { return { events: [
         { tStartMs: 0, dDurationMs: 500, segs: [{ utf8: "Hello." }] },
@@ -58,6 +60,8 @@ test("Stop then Start reuses captions already fetched for the same video", async
     URL,
     Set,
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
+    SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
+    SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
     SubToVoiceProviderClient: {
       async getRuntimeSettings() { return { targetLanguage: "vi", sourceLanguage: "en", multiVoice, speakerChunkSize: 2 }; },
       async translateBatch({ lines }) { return lines; },
@@ -71,9 +75,7 @@ test("Stop then Start reuses captions already fetched for the same video", async
       }
     },
     SubToVoiceAudioScheduler: {
-      LOOKAHEAD_MS: 30000,
       async decodeCompleteAudio() { return {}; },
-      computeAudioOffset() { return 0; },
       scheduleWindow() {}, cancelPendingSources() {}
     }
   };
@@ -82,6 +84,7 @@ test("Stop then Start reuses captions already fetched for the same video", async
   const send = (type) => new Promise((resolve) => messageHandler({ type }, {}, resolve));
 
   assert.equal((await send("CONTENT_START")).ok, true);
+  assert.equal(new URL(fetchedCaptionUrl).searchParams.get("fmt"), "json3");
   video.currentTime = 0.4;
   const transcript = (await send("CONTENT_GET_TRANSCRIPT")).transcript;
   assert.equal(transcript.windowStart, 0);

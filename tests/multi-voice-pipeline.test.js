@@ -58,6 +58,8 @@ test("multi-voice schedules each finished sentence without waiting for the rest 
     setTimeout(callback) { timers.push(callback); },
     AbortController, URL, Set,
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
+    SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
+    SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
     SubToVoiceProviderClient: {
       async getRuntimeSettings() { return {
         sourceLanguage: "en", targetLanguage: "vi", multiVoice: true,
@@ -75,9 +77,7 @@ test("multi-voice schedules each finished sentence without waiting for the rest 
       }
     },
     SubToVoiceAudioScheduler: {
-      LOOKAHEAD_MS: 30000, LATE_CUE_THRESHOLD_SEC: 0.5,
       async decodeCompleteAudio() { return { duration: 1 }; },
-      computeAudioOffset() { return 0; },
       scheduleWindow(session, start, end) {
         scheduled.push([start, end]);
         for (let index = start; index < end; index += 1) {
@@ -167,6 +167,8 @@ test("full-transcript speaker labeling splits only when the configured request l
     ] }; } }),
     setInterval() {}, setTimeout() {}, AbortController, URL, Set, Map, Date,
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
+    SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
+    SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
     SubToVoiceProviderClient: {
       async getRuntimeSettings() { return {
         sourceLanguage: "en", targetLanguage: "vi", multiVoice: true,
@@ -181,8 +183,7 @@ test("full-transcript speaker labeling splits only when the configured request l
       async synthesize() { return { audio: new ArrayBuffer(8) }; }
     },
     SubToVoiceAudioScheduler: {
-      LOOKAHEAD_MS: 30000, LATE_CUE_THRESHOLD_SEC: 0.5,
-      async decodeCompleteAudio() { return { duration: 1 }; }, computeAudioOffset() { return 0; },
+      async decodeCompleteAudio() { return { duration: 1 }; },
       scheduleWindow(session, start, end) { for (let i = start; i < end; i += 1) if (session.sentences[i]?._buffer) session.scheduledSentenceIndexes.add(i); return []; },
       scheduleAroundPlayhead() { return { start: 0, end: 2, scheduled: [] }; },
       cancelPendingSources(session) { session.scheduledSentenceIndexes.clear(); }
@@ -245,6 +246,8 @@ test("multi-voice startup reports Paused when the YouTube video was already paus
     ] }; } }),
     setInterval() {}, setTimeout() {}, AbortController, URL, Set,
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
+    SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
+    SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
     SubToVoiceProviderClient: {
       async getRuntimeSettings() { return { sourceLanguage: "en", targetLanguage: "vi", multiVoice: true, speakerChunkSize: 2, ttsConcurrency: 1 }; },
       async translateBatch({ lines }) { return lines; },
@@ -252,8 +255,7 @@ test("multi-voice startup reports Paused when the YouTube video was already paus
       async synthesize() { return { audio: new ArrayBuffer(8) }; }
     },
     SubToVoiceAudioScheduler: {
-      LOOKAHEAD_MS: 30000, LATE_CUE_THRESHOLD_SEC: 0.5,
-      async decodeCompleteAudio() { return { duration: 1 }; }, computeAudioOffset() { return 0; },
+      async decodeCompleteAudio() { return { duration: 1 }; },
       scheduleWindow(session, start, end) { for (let i = start; i < end; i += 1) if (session.sentences[i]?._buffer) session.scheduledSentenceIndexes.add(i); return []; },
       scheduleAroundPlayhead() { return { start: 0, end: 1, scheduled: [] }; },
       cancelPendingSources(session) { session.scheduledSentenceIndexes.clear(); }
@@ -308,6 +310,8 @@ test("multi-voice startup includes a caption already active at the playhead", as
     ] }; } }),
     setInterval() {}, setTimeout() {}, AbortController, URL, Set,
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
+    SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
+    SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
     SubToVoiceProviderClient: {
       async getRuntimeSettings() { return { sourceLanguage: "en", targetLanguage: "vi", multiVoice: true, speakerChunkSize: 2, ttsConcurrency: 1 }; },
       async translateBatch({ lines }) { return lines.map(() => "Dang noi."); },
@@ -315,8 +319,7 @@ test("multi-voice startup includes a caption already active at the playhead", as
       async synthesize({ text }) { synthesized.push(text); return { audio: new ArrayBuffer(8) }; }
     },
     SubToVoiceAudioScheduler: {
-      LOOKAHEAD_MS: 30000, LATE_CUE_THRESHOLD_SEC: 0.5,
-      async decodeCompleteAudio() { return { duration: 1 }; }, computeAudioOffset() { return 0; },
+      async decodeCompleteAudio() { return { duration: 1 }; },
       scheduleWindow(session, start, end) { for (let i = start; i < end; i += 1) if (session.sentences[i]?._buffer) session.scheduledSentenceIndexes.add(i); return []; },
       scheduleAroundPlayhead() { return { start: 0, end: 1, scheduled: [] }; },
       cancelPendingSources(session) { session.scheduledSentenceIndexes.clear(); }
@@ -350,8 +353,7 @@ test("multi-voice skips a materially late buffered cue instead of pausing foreve
     async close() {}
   }
   const scheduler = {
-    LOOKAHEAD_MS: 30000, LATE_CUE_THRESHOLD_SEC: 0.5,
-    async decodeCompleteAudio() { return { duration: 1 }; }, computeAudioOffset() { return 0; },
+    async decodeCompleteAudio() { return { duration: 1 }; },
     scheduleWindow(session, start, end, options) {
       for (let i = start; i < end; i += 1) {
         const sentence = session.sentences[i];
@@ -390,6 +392,8 @@ test("multi-voice skips a materially late buffered cue instead of pausing foreve
     ] }; } }),
     setInterval() {}, setTimeout(callback) { timers.push(callback); }, AbortController, URL, Set,
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
+    SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
+    SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
     SubToVoiceProviderClient: {
       async getRuntimeSettings() { return { sourceLanguage: "en", targetLanguage: "vi", multiVoice: true, speakerChunkSize: 2, multiVoiceLookaheadSeconds: 60, ttsConcurrency: 1 }; },
       async translateBatch({ lines }) { return lines; }, async labelSpeakers({ lines }) { return lines.map(() => "S1"); },
@@ -446,6 +450,8 @@ test("speaker labeling failure falls back quickly to two stable voices", async (
     ] }; } }),
     setInterval() {}, setTimeout() {}, AbortController, URL, Set, Map, Date,
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
+    SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
+    SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
     SubToVoiceProviderClient: {
       async getRuntimeSettings() { return { sourceLanguage: "en", targetLanguage: "vi", multiVoice: true, speakerVoiceCount: 2, speakerChunkSize: 8, ttsConcurrency: 1 }; },
       async translateBatch({ lines }) { return lines; },
@@ -453,8 +459,7 @@ test("speaker labeling failure falls back quickly to two stable voices", async (
       async synthesize({ speaker }) { speakers.push(speaker); return { audio: new ArrayBuffer(8) }; }
     },
     SubToVoiceAudioScheduler: {
-      LOOKAHEAD_MS: 30000, LATE_CUE_THRESHOLD_SEC: 0.5,
-      async decodeCompleteAudio() { return { duration: 1 }; }, computeAudioOffset() { return 0; },
+      async decodeCompleteAudio() { return { duration: 1 }; },
       scheduleWindow(session, start, end) { for (let i = start; i < end; i += 1) if (session.sentences[i]?._buffer) session.scheduledSentenceIndexes.add(i); return []; },
       scheduleAroundPlayhead() { return { start: 0, end: 2, scheduled: [] }; },
       cancelPendingSources(session) { session.scheduledSentenceIndexes.clear(); }

@@ -104,6 +104,8 @@ const coreFiles = [
   "background.js",
   "content.js",
   "lib/caption-core.js",
+  "lib/playback-clock.js",
+  "lib/playback-sync-controller.js",
   "lib/audio-scheduler.js",
   "lib/provider-client.js",
   "lib/translation-core.js",
@@ -116,10 +118,20 @@ for (const relativePath of coreFiles) {
   }
 }
 
-const forbiddenRuntimeApis = /MediaRecorder|RTCPeerConnection|getUserMedia|AudioWorklet|captureStream|playbackRate/;
+const forbiddenRuntimeApis = /MediaRecorder|RTCPeerConnection|getUserMedia|AudioWorklet|captureStream/;
 for (const relativePath of coreFiles) {
   if (forbiddenRuntimeApis.test(read(relativePath))) {
     fail("Deferred architecture leaked into current MVP: " + relativePath);
+  }
+}
+
+const playbackRateFiles = new Set([
+  "lib/playback-sync-controller.js",
+  "lib/audio-scheduler.js"
+]);
+for (const relativePath of coreFiles) {
+  if (!playbackRateFiles.has(relativePath) && /\bplaybackRate\b/.test(read(relativePath))) {
+    fail("playbackRate leaked outside the playback layer: " + relativePath);
   }
 }
 

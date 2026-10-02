@@ -254,7 +254,7 @@ Tasks:
 7. Stop: abort requests, cancel sources, disconnect, close AudioContext, restore volume, clear state
 8. ended -> clean stop
 9. YouTube SPA video change -> no old-session bleed
-10. no playbackRate support
+10. playbackRate support is isolated to the playback clock/sync/scheduler layer and reuses decoded TTS buffers on rate changes
 
 REQUIRED REAL BROWSER TEST:
 Use only a short region:

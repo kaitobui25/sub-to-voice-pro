@@ -199,7 +199,7 @@ Tasks:
 - Stop: abort, cancel, disconnect, close AudioContext, restore volume, clear state
 - ended -> clean stop
 - YouTube SPA change -> no old-session bleed
-- no playbackRate support
+- playbackRate support lives in the playback clock/sync/scheduler layer; rate changes reschedule decoded audio without re-running providers
 
 REQUIRED REAL BROWSER TEST:
 Use only a short region:

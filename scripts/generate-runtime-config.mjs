@@ -157,6 +157,11 @@ const runtimeConfig = {
   audio: {
     originalVolume: config.audio?.original_volume == null ? 18 : config.audio.original_volume,
     voiceVolume: config.audio?.voice_volume == null ? 100 : config.audio.voice_volume
+  },
+  playbackSync: {
+    lookaheadMs: config.playback_sync?.lookahead_ms == null ? 30000 : config.playback_sync.lookahead_ms,
+    lateThresholdMs: config.playback_sync?.late_threshold_ms == null ? 500 : config.playback_sync.late_threshold_ms,
+    startEpsilonMs: config.playback_sync?.start_epsilon_ms == null ? 20 : config.playback_sync.start_epsilon_ms
   }
 };
 

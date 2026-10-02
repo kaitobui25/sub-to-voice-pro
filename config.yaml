@@ -86,3 +86,8 @@ vieneu_tts:
 audio:
   original_volume: 18
   voice_volume: 100
+
+playback_sync:
+  lookahead_ms: 30000
+  late_threshold_ms: 500
+  start_epsilon_ms: 20

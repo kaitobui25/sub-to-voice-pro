@@ -8,6 +8,10 @@
   if (!CaptionCore) throw new Error("Sub-to-Voice caption core did not load.");
   const ProviderClient = globalThis.SubToVoiceProviderClient;
   if (!ProviderClient) throw new Error("Sub-to-Voice provider client did not load.");
+  const PlaybackClock = globalThis.SubToVoicePlaybackClock;
+  if (!PlaybackClock) throw new Error("Sub-to-Voice playback clock did not load.");
+  const PlaybackSyncController = globalThis.SubToVoicePlaybackSyncController;
+  if (!PlaybackSyncController) throw new Error("Sub-to-Voice playback sync controller did not load.");
   const AudioScheduler = globalThis.SubToVoiceAudioScheduler;
   if (!AudioScheduler) throw new Error("Sub-to-Voice audio scheduler did not load.");
 
@@ -227,7 +231,9 @@
   }
 
   async function fetchJson3(url, signal, kind) {
-    const target = url.includes("fmt=") ? url : url + "&fmt=json3";
+    const targetUrl = new URL(url);
+    targetUrl.searchParams.set("fmt", "json3");
+    const target = targetUrl.toString();
     const response = await fetch(target, { credentials: "include", signal });
     if (!response.ok) return null;
     const json = await response.json().catch(() => null);
@@ -354,8 +360,31 @@
   }
 
   function scheduleWithTrace(current, start, end) {
-    return AudioScheduler.scheduleWindow(current, start, end, {
+    return AudioScheduler.scheduleWindow(current, start, end, schedulerOptions(current, {
       onDecision: (decision) => recordScheduleDecision(current, decision)
+    }));
+  }
+
+  function playbackSyncConfig(current) {
+    return current.playbackSync || PlaybackClock.normalizeConfig(current.settings?.playbackSync);
+  }
+
+  function schedulerOptions(current, extra) {
+    const config = playbackSyncConfig(current);
+    return {
+      lookaheadMs: config.lookaheadMs,
+      lateThresholdSec: config.lateThresholdMs / 1000,
+      startEpsilonSec: config.startEpsilonMs / 1000,
+      ...(extra || {})
+    };
+  }
+
+  function refreshPlaybackClock(current) {
+    return PlaybackSyncController.refreshPlaybackAnchor({
+      video: current.video,
+      audioCtx: current.audioCtx,
+      clock: current.playbackClock,
+      resolveRate: (rate) => PlaybackClock.normalizeRate(rate)
     });
   }
 
@@ -366,10 +395,13 @@
 
   function recordScheduledAudio(current, scheduled) {
     for (const item of scheduled || []) {
-      const start = Math.max(0, item.playAt - current.audioOffset);
+      const start = Math.max(0, Number(item.videoStart));
+      const duration = Math.max(0, Number(item.videoDuration || 0));
       const record = {
         index: item.index, source: item.source, start,
-        end: start + item.duration, closed: false
+        end: start + duration, closed: false,
+        videoRate: item.videoRate,
+        voiceRate: item.voiceRate
       };
       current.audioTimings.push(record);
       current.audioTimingBySource.set(item.source, record);
@@ -397,6 +429,22 @@
         item.discarded = true;
         recordScheduleDecision(current, { index: item.index, status: "cancelled",
           videoTime: current.video.currentTime });
+      }
+    }
+  }
+
+  function discardAudioSources(current, sources) {
+    const cancelled = new Set(sources || []);
+    if (!cancelled.size) return;
+    for (const item of current.audioTimings) {
+      if (!item.closed && cancelled.has(item.source)) {
+        item.closed = true;
+        item.discarded = true;
+        recordScheduleDecision(current, {
+          index: item.index,
+          status: "cancelled",
+          videoTime: current.video.currentTime
+        });
       }
     }
   }
@@ -794,7 +842,7 @@
       recordScheduledAudio(current, scheduleWithTrace(current, index, index + 1));
       if (current.scheduledSentenceIndexes.has(index)) {
         current.nextAudioIndex += 1;
-      } else if (sentence.start < now - AudioScheduler.LATE_CUE_THRESHOLD_SEC) {
+      } else if (sentence.start < now - playbackSyncConfig(current).lateThresholdMs / 1000) {
         // The scheduler intentionally drops materially late cues. Waiting for
         // one can never succeed because it only becomes later while paused.
         current.nextAudioIndex += 1;
@@ -841,7 +889,7 @@
           (current.estimatedTtsSeconds || 0) * renderBatchSize)
       ) : 0;
       const horizon = videoTime + (current.settings.multiVoice
-        ? multiLookahead : AudioScheduler.LOOKAHEAD_MS / 1000);
+        ? multiLookahead : playbackSyncConfig(current).lookaheadMs / 1000);
       let targetIdx = current.sentences.findIndex((sentence) => sentence.start > horizon);
       if (targetIdx === -1) targetIdx = current.sentences.length;
       if (current.settings.multiVoice) {
@@ -885,13 +933,13 @@
     }
   }
 
-  function firstWaveBounds(sentences, currentTime) {
+  function firstWaveBounds(sentences, currentTime, lookaheadMs) {
     // Include a caption that is already active at the playhead. onPlay uses
     // the same end>=playhead rule; preparing a different window here can make
     // nextAudioIndex point behind renderCursor to a cue that was never TTS'd.
     let start = sentences.findIndex((sentence) => sentence.end >= currentTime);
     if (start === -1) start = sentences.length;
-    const horizon = currentTime + (AudioScheduler.LOOKAHEAD_MS / 1000);
+    const horizon = currentTime + (Math.max(0, Number(lookaheadMs) || 0) / 1000);
     let lookaheadEnd = sentences.findIndex((sentence) => sentence.start > horizon);
     if (lookaheadEnd === -1) lookaheadEnd = sentences.length;
     let end = Math.min(lookaheadEnd, start + 2);
@@ -934,6 +982,12 @@
     }
 
     const abortController = new AbortController();
+    const playbackSync = PlaybackClock.normalizeConfig(settings.playbackSync);
+    const playbackClock = PlaybackClock.createPlaybackClock({
+      videoTime: video.currentTime,
+      audioTime: audioCtx.currentTime,
+      rate: 1
+    });
     const current = {
       video,
       videoId,
@@ -941,6 +995,9 @@
       settings,
       audioCtx,
       outputGain,
+      playbackSync,
+      playbackClock,
+      playbackController: null,
       abortController,
       prepareAbortController: new AbortController(),
       sentences: [],
@@ -961,7 +1018,6 @@
       pendingSources: [],
       scheduledSentenceIndexes: new Set(),
       playedSentenceIndexes: new Set(),
-      audioOffset: 0,
       renderCursor: 0,
       stopFlag: false,
       paused: video.paused,
@@ -969,11 +1025,7 @@
       source: null,
       wasPlaying: !video.paused,
       originalVolume: video.volume,
-      originalMuted: video.muted,
-      _onPause: null,
-      _onPlay: null,
-      _onSeeked: null,
-      _onEnded: null
+      originalMuted: video.muted
     };
     session = current;
     setProbe("Loading captions…");
@@ -1016,7 +1068,7 @@
     current.rawCaptions = result.rawCaptions || result.captions;
     current.translations = new Array(sentences.length);
     current.source = result.source;
-    const firstWave = firstWaveBounds(sentences, video.currentTime);
+    const firstWave = firstWaveBounds(sentences, video.currentTime, playbackSync.lookaheadMs);
     if (firstWave.start >= firstWave.end) {
       session = null;
       try { audioCtx.close(); } catch {}
@@ -1054,10 +1106,7 @@
       return { ok: false, error: message };
     }
 
-    current.audioOffset = AudioScheduler.computeAudioOffset(
-      audioCtx.currentTime,
-      video.currentTime
-    );
+    refreshPlaybackClock(current);
     current.onAudioEnded = (source) => {
       const record = current.audioTimingBySource.get(source);
       if (record) record.closed = true;
@@ -1091,10 +1140,7 @@
       AudioScheduler.cancelPendingSources(current);
       await current.audioCtx.resume().catch(() => {});
       if (current !== session || current.stopFlag) return;
-      current.audioOffset = AudioScheduler.computeAudioOffset(
-        current.audioCtx.currentTime,
-        current.video.currentTime
-      );
+      current.playbackController.refreshAnchor();
       const waitingIndex = current.waitingForAudio;
       current.waitingForAudio = null;
       if (waitingIndex != null && !current.sentences[waitingIndex]?._buffer) {
@@ -1106,15 +1152,16 @@
         const trace = traceFor(current, waitingIndex);
         trace.waitEnd = traceTime(trace);
         recordScheduledAudio(current, AudioScheduler.scheduleWindow(
-          current, waitingIndex, waitingIndex + 1, {
-            lateThresholdSec: Infinity,
+          current, waitingIndex, waitingIndex + 1,
+          schedulerOptions(current, {
+            allowLate: true,
             onDecision: (decision) => recordScheduleDecision(current, decision)
-          }
+          })
         ));
       }
-      const window = AudioScheduler.scheduleAroundPlayhead(current, current.video, {
+      const window = AudioScheduler.scheduleAroundPlayhead(current, current.video, schedulerOptions(current, {
         onDecision: (decision) => recordScheduleDecision(current, decision)
-      });
+      }));
       recordScheduledAudio(current, window.scheduled);
       if (current.settings.multiVoice) {
         current.nextAudioIndex = waitingIndex != null ? waitingIndex + 1 : window.start;
@@ -1142,13 +1189,10 @@
         current.renderTail = Promise.resolve();
         current.waitingForAudio = null;
       }
-      current.audioOffset = AudioScheduler.computeAudioOffset(
-        current.audioCtx.currentTime,
-        current.video.currentTime
-      );
-      const window = AudioScheduler.scheduleAroundPlayhead(current, current.video, {
+      current.playbackController.refreshAnchor();
+      const window = AudioScheduler.scheduleAroundPlayhead(current, current.video, schedulerOptions(current, {
         onDecision: (decision) => recordScheduleDecision(current, decision)
-      });
+      }));
       recordScheduledAudio(current, window.scheduled);
       if (current.settings.multiVoice) {
         current.renderCursor = window.start;
@@ -1159,17 +1203,39 @@
       updateLiveDisplay(current);
       if (wasWaitingForAudio) void current.video.play().catch(() => {});
     };
+    const onRateChange = () => {
+      if (current !== session || current.stopFlag) return;
+      current.playbackController.refreshAnchor();
+      if (current.video.paused) return;
+      const resync = AudioScheduler.resyncPendingSources(current);
+      discardAudioSources(current, resync.cancelledSources);
+      const window = AudioScheduler.scheduleAroundPlayhead(current, current.video, schedulerOptions(current, {
+        allowLate: true,
+        onDecision: (decision) => recordScheduleDecision(current, decision)
+      }));
+      recordScheduledAudio(current, window.scheduled);
+      if (current.settings.multiVoice) {
+        current.nextAudioIndex = window.start;
+        while (current.scheduledSentenceIndexes.has(current.nextAudioIndex) ||
+               current.playedSentenceIndexes.has(current.nextAudioIndex)) current.nextAudioIndex += 1;
+      }
+      updateLiveDisplay(current);
+    };
     const onEnded = () => {
       stopSession("Video ended.");
     };
-    current._onPause = onPause;
-    current._onPlay = onPlay;
-    current._onSeeked = onSeeked;
-    current._onEnded = onEnded;
-    video.addEventListener("pause", onPause);
-    video.addEventListener("play", onPlay);
-    video.addEventListener("seeked", onSeeked);
-    video.addEventListener("ended", onEnded);
+    current.playbackController = PlaybackSyncController.createPlaybackSyncController({
+      video,
+      audioCtx,
+      clock: current.playbackClock,
+      resolveRate: (rate) => PlaybackClock.normalizeRate(rate),
+      onPause,
+      onPlay,
+      onSeeked,
+      onRateChange,
+      onEnded
+    });
+    current.playbackController.attach();
 
     if (current.wasPlaying) {
       try { await video.play(); } catch {}
@@ -1196,18 +1262,7 @@
       try { current.prepareAbortController.abort(); } catch {}
       try { current.renderAbortController.abort(); } catch {}
       AudioScheduler.cancelPendingSources(current);
-      if (current._onPause) {
-        try { current.video.removeEventListener("pause", current._onPause); } catch {}
-      }
-      if (current._onPlay) {
-        try { current.video.removeEventListener("play", current._onPlay); } catch {}
-      }
-      if (current._onSeeked) {
-        try { current.video.removeEventListener("seeked", current._onSeeked); } catch {}
-      }
-      if (current._onEnded) {
-        try { current.video.removeEventListener("ended", current._onEnded); } catch {}
-      }
+      try { current.playbackController?.detach(); } catch {}
       try { current.outputGain.disconnect(); } catch {}
       try { current.audioCtx.close(); } catch {}
       try {

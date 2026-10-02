@@ -78,6 +78,7 @@ function publicRuntimeSettings(config, selections) {
     speakerContextSize: config.speakerDetection?.contextSize ?? 8,
     multiVoiceLookaheadSeconds: config.speakerDetection?.lookaheadSeconds ?? 60,
     multiVoiceMaxLookaheadSeconds: config.speakerDetection?.maxLookaheadSeconds ?? 120,
+    playbackSync: config.playbackSync || {},
     voice: profile?.voice || null,
     speed: config.tts?.speed ?? 1,
     ttsConcurrency: Math.max(1, Math.floor(profile?.maxConcurrency ?? 5))
@@ -181,6 +182,15 @@ if (typeof chrome.webRequest?.onCompleted?.addListener === "function") {
   }, YT_CACHE_GC_MS);
 }
 
+function contentScriptBundle() {
+  const bundle = chrome.runtime.getManifest()?.content_scripts?.[0];
+  if (!bundle?.js?.length) throw new Error("Manifest content script bundle is missing.");
+  return {
+    js: [...bundle.js],
+    css: Array.isArray(bundle.css) ? [...bundle.css] : []
+  };
+}
+
 async function ensureContentScript(tabId) {
   try {
     const reply = await chrome.tabs.sendMessage(tabId, { type: "CONTENT_PING" });
@@ -189,19 +199,17 @@ async function ensureContentScript(tabId) {
     // The target tab may predate extension installation/reload.
   }
 
+  const bundle = contentScriptBundle();
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: [
-      "lib/caption-core.js",
-      "lib/audio-scheduler.js",
-      "lib/provider-client.js",
-      "content.js"
-    ]
+    files: bundle.js
   });
-  await chrome.scripting.insertCSS({
-    target: { tabId },
-    files: ["content.css"]
-  }).catch(() => {});
+  if (bundle.css.length) {
+    await chrome.scripting.insertCSS({
+      target: { tabId },
+      files: bundle.css
+    }).catch(() => {});
+  }
 }
 
 async function stopActiveSession(reason) {
