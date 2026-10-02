@@ -144,7 +144,7 @@ const runtimeConfig = {
   },
   speakerDetection: {
     renderBatchSize: config.speaker_detection?.render_batch_size || 8,
-    maxLinesPerRequest: config.speaker_detection?.max_lines_per_request || 600,
+    maxLinesPerRequest: config.speaker_detection?.max_lines_per_request || 300,
     maxPromptChars: config.speaker_detection?.max_prompt_chars || 60000,
     contextSize: config.speaker_detection?.context_size || 16,
     timeoutMs: config.speaker_detection?.timeout_ms || 25000,

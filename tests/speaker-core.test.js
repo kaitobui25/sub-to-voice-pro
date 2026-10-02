@@ -10,17 +10,21 @@ test("speaker prompt has numbered lines and requests only ID-label pairs", () =>
   assert.match(prompt, /S3/);
   assert.match(prompt, /5/);
   assert.match(prompt, /Previous labeled context/);
-  assert.doesNotMatch(prompt, /Andrew|Oded|host|guest/i);
+  assert.match(prompt, /beginning and intro/i);
+  assert.match(prompt, /host\/guest roles/i);
+  assert.match(prompt, /Assign S1 to the first distinguishable speaker/i);
+  assert.doesNotMatch(prompt, /male voices|female voices|gender/i);
+  assert.doesNotMatch(prompt, /You do not know the video/i);
   assert.deepEqual(parseLabels(["5 S1", "6 S2"], lines), ["S1", "S2"]);
   assert.throws(() => parseLabels(["6 S1", "5 S2"], lines), /Invalid speaker label/);
 });
 
-test("configured voices cycle by speaker while unknown labels use the default", () => {
-  const voices = ["North male", "South male", "Central male"];
-  assert.equal(voiceForSpeaker("S1", voices, "default"), voices[0]);
-  assert.equal(voiceForSpeaker("S2", voices, "default"), voices[1]);
-  assert.equal(voiceForSpeaker("S3", voices, "default"), voices[2]);
-  assert.equal(voiceForSpeaker("S4", voices, "default"), voices[0]);
-  assert.equal(voiceForSpeaker("S5", ["A", "B"], "default"), "A");
+test("configured VieNeu voices alternate by speaker while unknown labels use the default", () => {
+  const voices = ["Male voice", "Female voice"];
+  assert.equal(voiceForSpeaker("S1", voices, "default"), "Male voice");
+  assert.equal(voiceForSpeaker("S2", voices, "default"), "Female voice");
+  assert.equal(voiceForSpeaker("S3", voices, "default"), "Male voice");
+  assert.equal(voiceForSpeaker("S4", voices, "default"), "Female voice");
+  assert.equal(voiceForSpeaker("S5", voices, "default"), "Male voice");
   assert.equal(voiceForSpeaker("U", voices, "default"), "default");
 });

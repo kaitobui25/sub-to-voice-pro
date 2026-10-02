@@ -73,7 +73,7 @@ function publicRuntimeSettings(config, selections) {
     multiVoice: selections.voiceMode === "multi" && Array.isArray(profile?.speakerVoices) && profile.speakerVoices.length > 1,
     speakerVoiceCount: Array.isArray(profile?.speakerVoices) ? profile.speakerVoices.length : 0,
     renderBatchSize: config.speakerDetection?.renderBatchSize ?? config.speakerDetection?.chunkSize ?? 8,
-    speakerMaxLinesPerRequest: config.speakerDetection?.maxLinesPerRequest ?? 600,
+    speakerMaxLinesPerRequest: config.speakerDetection?.maxLinesPerRequest ?? 300,
     speakerMaxPromptChars: config.speakerDetection?.maxPromptChars ?? 60000,
     speakerContextSize: config.speakerDetection?.contextSize ?? 8,
     multiVoiceLookaheadSeconds: config.speakerDetection?.lookaheadSeconds ?? 60,
@@ -322,7 +322,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         throw new Error("Multi-voice mode is off.");
       }
       if (!Array.isArray(message.lines) || !message.lines.length ||
-          message.lines.length > (config.speakerDetection?.maxLinesPerRequest ?? 600)) {
+          message.lines.length > (config.speakerDetection?.maxLinesPerRequest ?? 300)) {
         throw new Error("Invalid speaker batch size.");
       }
       const timeoutMs = Math.max(1000, Number(config.speakerDetection?.timeoutMs || 25000));

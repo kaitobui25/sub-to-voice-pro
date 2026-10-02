@@ -620,7 +620,7 @@
   }
 
   function speakerBatch(current, start) {
-    const maxLines = Math.max(1, Math.floor(current.settings.speakerMaxLinesPerRequest || 600));
+    const maxLines = Math.max(1, Math.floor(current.settings.speakerMaxLinesPerRequest || 300));
     const maxPromptChars = Math.max(4000, Math.floor(current.settings.speakerMaxPromptChars || 60000));
     const context = speakerContext(current, start);
     const hardEnd = Math.min(current.sentences.length, start + maxLines);
