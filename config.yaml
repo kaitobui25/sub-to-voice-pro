@@ -72,6 +72,7 @@ gemini_tts:
   max_concurrency: 5
 
 vieneu_tts:
+  complete_audio: true
   base_url: http://127.0.0.1:8000/v1
   model: vieneu-v3-turbo
   voice: Hải Đăng
@@ -95,11 +96,11 @@ playback_sync:
 audio_preparation:
   adaptive_startup: true
   grouped_resume: true
-  startup_seconds: 6
-  resume_seconds: 3
-  max_buffer_seconds: 8
-  planning_seconds: 10
-  startup_max_wait_seconds: 8
-  resume_max_wait_seconds: 5
+  startup_seconds: 30
+  resume_seconds: 10
+  max_buffer_seconds: 120
+  planning_seconds: 300
   estimation_window: 12
   estimation_min_video_seconds: 8
+  max_queued_sentences: 8
+  retain_past_seconds: 8

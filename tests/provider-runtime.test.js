@@ -43,6 +43,26 @@ test("provider runtime builds configured VieNeu TTS manager", () => {
   assert.equal(ttsManager.providerName, "vieneu");
 });
 
+test("provider runtime forwards complete audio configuration to the VieNeu request", async () => {
+  const originalFetch = globalThis.fetch;
+  let body;
+  globalThis.fetch = async (url, options) => {
+    if (url.endsWith("/health")) return { ok: true, json: async () => ({ status: "ok" }) };
+    body = JSON.parse(options.body);
+    return { ok: true, status: 200, headers: { get: () => null }, arrayBuffer: async () => new ArrayBuffer(8) };
+  };
+  try {
+    const manager = runtime.createTTSManager({
+      provider: "vieneu", baseUrl: "http://127.0.0.1:8000/v1",
+      model: "test", voice: "test", sampleRate: 48000, completeAudio: true
+    });
+    await manager.synthesize({ text: "test" });
+    assert.equal(body.complete_audio, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("provider runtime rejects unknown configured providers", () => {
   assert.throws(
     () => runtime.createTranslationManager({ provider: "unknown", models: ["m"] }),

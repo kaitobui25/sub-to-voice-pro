@@ -47,6 +47,22 @@ function makeStreamingWav() {
   return bytes.buffer;
 }
 
+test("VieNeu complete audio is opt-in for compatible local servers", async () => {
+  let body;
+  const provider = createVieNeuTTSProvider({
+    baseUrl: "http://127.0.0.1:8000/v1", model: "test", voice: "test",
+    sampleRate: 48000, completeAudio: true,
+    fetchImpl: async (url, options) => {
+      if (url.endsWith("/health")) return { ok: true, json: async () => ({ status: "ok" }) };
+      body = JSON.parse(options.body);
+      return { ok: true, status: 200, headers: { get: () => null }, arrayBuffer: async () => makeStreamingWav() };
+    }
+  });
+  await provider.synthesize({ text: "test" });
+  assert.equal(body.complete_audio, true);
+  assert.equal(body.stream_format, "audio");
+});
+
 test("VieNeu adapter sends configured OpenAI-compatible speech request and returns repaired WAV", async () => {
   const calls = [];
   const provider = createVieNeuTTSProvider({

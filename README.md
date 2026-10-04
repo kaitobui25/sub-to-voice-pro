@@ -91,6 +91,30 @@ Reload the extension after installation. With `TTS_PROVIDER=vieneu`, clicking th
 
 The server is configured to bind only to http://127.0.0.1:8000. Current local defaults are VieNeu-TTS v3 Turbo, voice Hải Đăng, 48 kHz, and one concurrent synthesis request on CPU. Change the local model/voice/endpoint in config.yaml, then rerun npm run config and reload the extension.
 
+## Preparing audio before playback
+
+ON pauses the video while captions, translation, speaker labels and the initial
+Vietnamese audio buffer are prepared. Playback begins only after the requested
+startup span is ready. Startup and grouped resume never release incomplete audio
+just because a timer has expired.
+Late Vietnamese cues are retained. If rolling TTS falls behind, playback waits
+for audio instead of skipping sentences.
+
+`audio_preparation.startup_seconds` sets initial buffered coverage, with the
+adaptive target capped by `max_buffer_seconds`. `planning_seconds` is the horizon
+used to cover the measured synthesis deficit; the startup target may grow while
+audio is being prepared and stays stable once increased. `max_queued_sentences` bounds
+rolling TTS work. Decoded audio older than `retain_past_seconds` is released
+when no longer scheduled; future audio required for playback is retained.
+The JSON diagnostic export includes current cache bytes and queued TTS count.
+After changing `config.yaml`, run `npm run config` and reload the extension.
+
+The local `vieneu_tts.complete_audio` option asks the patched server to produce
+the complete audio response before sending headers. This matches the extension's
+complete-file decoding and releases the synthesis slot even when the client
+disconnects. `scripts/vieneu-start.ps1` applies the opt-in API patch before starting
+the server. Streaming requests from other clients keep their existing behavior.
+
 ## Checks
 
 Run deterministic checks without provider calls:

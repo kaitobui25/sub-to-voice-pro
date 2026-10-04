@@ -31,6 +31,9 @@ $env:VIENEU_MAX_STREAMS = "1"
 $env:HOST = "127.0.0.1"
 $env:PORT = "8000"
 
+& (Join-Path $repo ".venv\Scripts\python.exe") (Join-Path $PSScriptRoot "vieneu-enable-complete-audio.py")
+if ($LASTEXITCODE -ne 0) { throw "Could not enable VieNeu complete audio responses." }
+
 $uv = Get-Command "uv" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1
 if (-not $uv) {
   $userUv = Join-Path $env:USERPROFILE ".local\bin\uv.exe"

@@ -87,7 +87,12 @@ test("multi-voice schedules each finished sentence without waiting for the rest 
         return [];
       },
       scheduleAroundPlayhead(session) {
-        for (let index = 0; index < 2; index += 1) session.scheduledSentenceIndexes.add(index);
+        for (let index = 0; index < 4; index += 1) {
+          if (session.sentences[index]?._buffer && !session.scheduledSentenceIndexes.has(index)) {
+            scheduled.push([index, index + 1]);
+            session.scheduledSentenceIndexes.add(index);
+          }
+        }
         return { start: 0, end: 4, scheduled: [] };
       },
       cancelPendingSources(session) { session.scheduledSentenceIndexes.clear(); }
@@ -223,7 +228,7 @@ test("full-transcript speaker labeling splits only when the configured request l
   await send("CONTENT_STOP");
 });
 
-test("multi-voice startup reports Paused when the YouTube video was already paused", async () => {
+test("multi-voice ON prepares audio then plays an initially paused video", async () => {
   const listeners = new Map();
   const video = {
     paused: true, currentTime: 0, volume: 1, muted: false,
@@ -285,10 +290,10 @@ test("multi-voice startup reports Paused when the YouTube video was already paus
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../content.js"), "utf8"), context);
   const result = await new Promise((resolve) => handler({ type: "CONTENT_START" }, {}, resolve));
   assert.equal(result.ok, true);
-  assert.equal(result.status, "Paused");
-  assert.equal(video.paused, true);
-  assert.equal(states.at(-1)?.status, "Paused");
-  assert.equal(states.at(-1)?.paused, true);
+  assert.equal(result.status, "Translating");
+  assert.equal(video.paused, false);
+  assert.equal(states.at(-1)?.status, "Translating");
+  assert.equal(states.at(-1)?.paused, false);
 });
 
 test("multi-voice startup includes a caption already active at the playhead", async () => {

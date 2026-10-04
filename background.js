@@ -250,10 +250,7 @@ async function startInTab(tab) {
     detectedSpeakers: []
   };
   await setActionState("loading", false);
-  const config = await loadRuntimeConfig();
-  const selection = (await providerSelections(config)).tts;
-  await SubToVoiceProviderRuntime.ensureInitialTTSReady(config.tts, selection);
-  if (generation !== stateGeneration) return { ok: false, cancelled: true };
+  // The synthesis path starts/checks TTS after the content script pauses video.
   await ensureContentScript(tab.id);
   if (generation !== stateGeneration) return { ok: false, cancelled: true };
 

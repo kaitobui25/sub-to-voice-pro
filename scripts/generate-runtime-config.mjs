@@ -92,6 +92,7 @@ const ttsProfiles = {
       voice: config.vieneu_tts?.voice,
       speakerVoices: config.vieneu_tts?.speaker_voices || [],
       sampleRate: config.vieneu_tts?.sample_rate,
+      completeAudio: config.vieneu_tts?.complete_audio === true,
       maxConcurrency: config.vieneu_tts?.max_concurrency,
       busyRetryTimeoutMs: config.vieneu_tts?.busy_retry_timeout_ms,
       busyRetryDelayMs: config.vieneu_tts?.busy_retry_delay_ms,
@@ -165,10 +166,10 @@ const runtimeConfig = {
     resumeSeconds: config.audio_preparation?.resume_seconds,
     maxBufferSeconds: config.audio_preparation?.max_buffer_seconds,
     planningSeconds: config.audio_preparation?.planning_seconds,
-    startupMaxWaitSeconds: config.audio_preparation?.startup_max_wait_seconds,
-    resumeMaxWaitSeconds: config.audio_preparation?.resume_max_wait_seconds,
     estimationWindow: config.audio_preparation?.estimation_window,
-    estimationMinVideoSeconds: config.audio_preparation?.estimation_min_video_seconds
+    estimationMinVideoSeconds: config.audio_preparation?.estimation_min_video_seconds,
+    maxQueuedSentences: config.audio_preparation?.max_queued_sentences,
+    retainPastSeconds: config.audio_preparation?.retain_past_seconds
   },
   playbackSync: {
     lookaheadMs: config.playback_sync?.lookahead_ms == null ? 30000 : config.playback_sync.lookahead_ms,

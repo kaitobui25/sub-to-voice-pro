@@ -368,6 +368,9 @@
       sentenceId: Number.isInteger(index) ? index + 1 : null,
       waitingForAudio: current.waitingForAudio != null,
       audioReady: Boolean(current.sentences[index]?._buffer),
+      cachedAudioBytes: current.cachedAudioBytes,
+      cachedAudioCount: current.cachedSentenceIndexes.size,
+      queuedTtsCount: current.queuedTtsCount,
       ...details
     };
     current.playbackEvents[(event.sequence - 1) % MAX_PLAYBACK_EVENTS] = event;
@@ -396,6 +399,12 @@
     return {
       schemaVersion: 1, videoId: current.videoId, startedAt: current.diagnosticStartedAtUtc,
       exportedAt: new Date().toISOString(),
+      resources: {
+        cachedAudioBytes: current.cachedAudioBytes,
+        cachedAudioCount: current.cachedSentenceIndexes.size,
+        queuedTtsCount: current.queuedTtsCount,
+        pendingAudioSources: current.pendingSources.length
+      },
       settings: {
         multiVoice: current.settings.multiVoice,
         translationProvider: current.settings.translationProvider,
@@ -436,6 +445,7 @@
     const config = playbackSyncConfig(current);
     return {
       lookaheadMs: config.lookaheadMs,
+      allowLate: true,
       lateThresholdSec: config.lateThresholdMs / 1000,
       startEpsilonSec: config.startEpsilonMs / 1000,
       ...(extra || {})
@@ -455,6 +465,24 @@
     const trace = traceFor(current, decision.index);
     trace.schedule = { ...decision, at: traceTime(trace) };
     recordPlaybackEvent(current, "schedule_decision", { ...decision, sentenceId: decision.index + 1 });
+  }
+
+  function releaseAudioBuffer(current, index) {
+    const sentence = current.sentences[index];
+    if (!sentence?._buffer) return;
+    current.cachedAudioBytes = Math.max(0, current.cachedAudioBytes - (sentence._bufferBytes || 0));
+    delete sentence._buffer;
+    delete sentence._bufferBytes;
+    current.cachedSentenceIndexes.delete(index);
+  }
+
+  function pruneAudioBuffers(current) {
+    const oldest = current.video.currentTime - current.audioPreparation.retainPastSeconds;
+    for (const index of current.cachedSentenceIndexes) {
+      if (current.sentences[index].end < oldest && !current.scheduledSentenceIndexes.has(index)) {
+        releaseAudioBuffer(current, index);
+      }
+    }
   }
 
   function recordScheduledAudio(current, scheduled) {
@@ -483,6 +511,7 @@
         item.end = Math.min(item.end, now);
       }
       item.closed = true;
+      item.source = null;
     }
   }
 
@@ -490,6 +519,7 @@
     for (const item of current.audioTimings) {
       if (!item.closed) {
         item.closed = true;
+        item.source = null;
         item.discarded = true;
         recordScheduleDecision(current, { index: item.index, status: "cancelled",
           videoTime: current.video.currentTime });
@@ -503,6 +533,7 @@
     for (const item of current.audioTimings) {
       if (!item.closed && cancelled.has(item.source)) {
         item.closed = true;
+        item.source = null;
         item.discarded = true;
         recordScheduleDecision(current, {
           index: item.index,
@@ -819,6 +850,7 @@
           if (current !== session || current.stopFlag) return;
           const index = queue[cursor++];
           const trace = traceFor(current, index);
+          const sentence = current.sentences[index];
           trace.ttsStart = traceTime(trace);
           trace.ttsQueueWaitMs = Math.max(0, (trace.ttsStart - (trace.ttsQueuedAt ?? trace.ttsStart)) * 1000);
           delete trace.ttsError;
@@ -833,20 +865,25 @@
             if (current !== session || current.stopFlag || options.signal?.aborted) return;
             trace.ttsTelemetry = { ...result.telemetry };
             const decodeStarted = traceTime(trace);
-            current.sentences[index]._buffer = await AudioScheduler.decodeCompleteAudio(
+            const buffer = await AudioScheduler.decodeCompleteAudio(
               current.audioCtx, result.audio
             );
+            if (current !== session || current.stopFlag || options.signal?.aborted) return;
+            sentence._buffer = buffer;
+            sentence._bufferBytes = (buffer.length || 0) * (buffer.numberOfChannels || 0) * Float32Array.BYTES_PER_ELEMENT;
+            current.cachedAudioBytes += sentence._bufferBytes;
+            current.cachedSentenceIndexes.add(index);
             trace.ttsEnd = traceTime(trace);
             trace.ttsTelemetry.audioDecodeMs = (trace.ttsEnd - decodeStarted) * 1000;
             trace.ttsTelemetry.audioDurationSeconds = current.sentences[index]._buffer.duration;
             const ttsDuration = trace.ttsEnd - trace.ttsStart;
             current.estimatedTtsSeconds = current.estimatedTtsSeconds == null
               ? ttsDuration : current.estimatedTtsSeconds * 0.75 + ttsDuration * 0.25;
-            const sentence = current.sentences[index];
             current.renderEstimate = AudioPreparation.observe(current.renderEstimate,
               ttsDuration, sentence.end - sentence.start, current.audioPreparation);
             current.estimatedRenderRatio = current.renderEstimate?.ratio;
             options.onReady?.(index);
+            pruneAudioBuffers(current);
           } catch (error) {
             trace.ttsError = error?.message || String(error);
             if (error?.telemetry) trace.ttsTelemetry = error.telemetry;
@@ -874,6 +911,7 @@
   }
 
   function queueMultiVoiceAudio(current, start, end) {
+    current.queuedTtsCount += end - start;
     for (let index = start; index < end; index += 1) {
       const trace = traceFor(current, index);
       trace.ttsQueuedAt = traceTime(trace);
@@ -888,7 +926,11 @@
           if (current.waitingForAudio != null) {
             maybeResumePreparedAudio(current);
           } else if (!current.video.paused) {
-            recordScheduledAudio(current, scheduleWithTrace(current, index, index + 1));
+            const window = AudioScheduler.scheduleAroundPlayhead(current, current.video,
+              schedulerOptions(current, {
+                onDecision: (decision) => recordScheduleDecision(current, decision)
+              }));
+            recordScheduledAudio(current, window.scheduled);
             if (index === current.nextAudioIndex &&
                 (current.scheduledSentenceIndexes.has(index) || current.playedSentenceIndexes.has(index))) {
               current.nextAudioIndex += 1;
@@ -902,6 +944,8 @@
       stopSession("Dub render failed", false, false);
       setProbe("Dub render failed", message);
       emitState({ running: false, status: "Dub render failed", errorMessage: message });
+    }).finally(() => {
+      if (signal === current.renderAbortController.signal) current.queuedTtsCount = Math.max(0, current.queuedTtsCount - (end - start));
     });
   }
 
@@ -921,10 +965,6 @@
     if (sentence._buffer) {
       recordScheduledAudio(current, scheduleWithTrace(current, index, index + 1));
       if (current.scheduledSentenceIndexes.has(index)) {
-        current.nextAudioIndex += 1;
-      } else if (sentence.start < now - playbackSyncConfig(current).lateThresholdMs / 1000) {
-        // The scheduler intentionally drops materially late cues. Waiting for
-        // one can never succeed because it only becomes later while paused.
         current.nextAudioIndex += 1;
       } else {
         current.waitingForAudio = index;
@@ -954,7 +994,7 @@
       if (!current.bufferWait || current.bufferWait.index !== start) {
         current.bufferWait = { index: start, targetSeconds: target, startedAt: now };
         recordPlaybackEvent(current, "buffer_wait", {
-          targetSeconds: target, waitBudgetSeconds: current.audioPreparation.resumeMaxWaitSeconds,
+          targetSeconds: target,
           renderRatio: current.estimatedRenderRatio
         });
       }
@@ -964,17 +1004,14 @@
     const state = AudioPreparation.readiness(current.sentences, start, current.video.currentTime,
       target, current.playedSentenceIndexes);
     const waitedSeconds = plan ? (now - plan.startedAt) / 1000 : 0;
-    const maxWait = phase === "startup" ? current.audioPreparation.startupMaxWaitSeconds : current.audioPreparation.resumeMaxWaitSeconds;
-    return { ...state, waitedSeconds, waitBudgetSeconds: maxWait,
-      deadlineReached: waitedSeconds >= maxWait,
-      canResume: state.ready || (waitedSeconds >= maxWait && Boolean(current.sentences[start]?._buffer)) };
+    return { ...state, waitedSeconds };
   }
 
   function maybeResumePreparedAudio(current) {
     const index = current.waitingForAudio;
     if (index == null || current.resumePending || !current.sentences[index]?._buffer) return;
     const state = preparationReadiness(current, index, "resume");
-    if (current.audioPreparation.groupedResume && !state.canResume) return;
+    if (current.audioPreparation.groupedResume && !state.ready) return;
     recordPlaybackEvent(current, "buffer_resume", { ...state, renderRatio: current.estimatedRenderRatio });
     current.resumePending = true;
     const generation = current.seekGeneration;
@@ -987,6 +1024,7 @@
     while (current === session && !current.stopFlag) {
       await new Promise((resolve) => setTimeout(resolve, current.settings.multiVoice ? 250 : 1000));
       if (current !== session || current.stopFlag) return;
+      pruneAudioBuffers(current);
       if (current.waitingForAudio != null) maybeResumePreparedAudio(current);
       // A scheduler-induced pause is not a user pause. Keep rendering while
       // waiting so the missing sentence can be translated and synthesized;
@@ -1014,7 +1052,8 @@
       let targetIdx = current.sentences.findIndex((sentence) => sentence.start > horizon);
       if (targetIdx === -1) targetIdx = current.sentences.length;
       if (current.settings.multiVoice) {
-        targetIdx = Math.min(targetIdx, current.renderCursor + renderBatchSize);
+        const available = Math.max(0, Math.floor(current.audioPreparation.maxQueuedSentences) - current.queuedTtsCount);
+        targetIdx = Math.min(targetIdx, current.renderCursor + renderBatchSize, current.renderCursor + available);
       }
       if (targetIdx <= current.renderCursor) {
         updateLiveDisplay(current);
@@ -1123,6 +1162,9 @@
       audioPreparation: AudioPreparation.normalizeConfig(settings.audioPreparation),
       estimatedRenderRatio: null,
       renderEstimate: null,
+      cachedSentenceIndexes: new Set(),
+      cachedAudioBytes: 0,
+      queuedTtsCount: 0,
       bufferWait: null,
       resumePending: false,
       abortController,
@@ -1222,26 +1264,30 @@
       setProbe("Preparing voices…");
       const preparationStartedAt = globalThis.performance?.now?.() ?? Date.now();
       await renderWaveTTS(current, firstWave.start, firstWave.end);
-      if (current.settings.multiVoice && current.audioPreparation.adaptiveStartup) {
+      if (current.audioPreparation.adaptiveStartup) {
         const plan = {
           startedAt: preparationStartedAt,
           targetSeconds: AudioPreparation.targetSeconds(current.audioPreparation, current.estimatedRenderRatio,
             PlaybackClock.normalizeRate(PlaybackSyncController.getRate(video)), "startup")
         };
         let state = preparationReadiness(current, firstWave.start, "startup", plan);
-        if (!state.canResume) {
+        if (!state.ready) {
           const horizon = video.currentTime + current.audioPreparation.maxBufferSeconds;
           const boundary = sentences.findIndex((sentence) => sentence.start > horizon);
           const end = boundary === -1 ? sentences.length : boundary;
           if (end > firstWave.end) await translateBatch(current, firstWave.end, end);
         }
-        while (!state.canResume && current === session && !current.stopFlag) {
+        while (!state.ready && firstWave.end < sentences.length && current === session && !current.stopFlag) {
           const index = firstWave.end;
           await renderWaveTTS(current, index, index + 1);
           firstWave.end += 1;
+          plan.targetSeconds = Math.max(plan.targetSeconds,
+            AudioPreparation.targetSeconds(current.audioPreparation, current.estimatedRenderRatio,
+              PlaybackClock.normalizeRate(PlaybackSyncController.getRate(video)), "startup"));
           state = preparationReadiness(current, firstWave.start, "startup", plan);
         }
         if (current !== session || current.stopFlag) return { ok: false, error: "Cancelled." };
+        if (!state.ready) throw new Error("Startup audio is incomplete.");
         recordPlaybackEvent(current, "buffer_startup", { ...state, renderRatio: current.estimatedRenderRatio });
       }
     } catch (error) {
@@ -1263,10 +1309,20 @@
 
     refreshPlaybackClock(current);
     current.onAudioEnded = (source) => {
+      if (!source._cancelledByScheduler) {
+        recordPlaybackEvent(current, "audio_ended", { sentenceId: source._sentenceIdx + 1 });
+      }
       const record = current.audioTimingBySource.get(source);
-      if (record) record.closed = true;
+      if (record) {
+        record.closed = true;
+        record.source = null;
+      }
+      current.audioTimingBySource.delete(source);
+      pruneAudioBuffers(current);
     };
-    recordScheduledAudio(current, scheduleWithTrace(current, firstWave.start, firstWave.end));
+    if (!video.paused) {
+      recordScheduledAudio(current, scheduleWithTrace(current, firstWave.start, firstWave.end));
+    }
     current.renderCursor = firstWave.end;
     current.nextAudioIndex = firstWave.end;
     applyVolumes(current);
@@ -1299,7 +1355,7 @@
       const waitingIndex = current.waitingForAudio;
       current.waitingForAudio = null;
       if (waitingIndex != null && (!current.sentences[waitingIndex]?._buffer ||
-          (current.audioPreparation.groupedResume && !preparationReadiness(current, waitingIndex, "resume").canResume))) {
+          (current.audioPreparation.groupedResume && !preparationReadiness(current, waitingIndex, "resume").ready))) {
         current.waitingForAudio = waitingIndex;
         pauseVideo(current, current.sentences[current.waitingForAudio]?._buffer ? "audio_schedule_pending" : "audio_not_ready");
         return;
@@ -1345,6 +1401,7 @@
         current.renderAbortController.abort();
         current.renderAbortController = new AbortController();
         current.renderTail = Promise.resolve();
+        current.queuedTtsCount = 0;
         current.waitingForAudio = null;
         current.bufferWait = null;
         current.resumePending = false;
@@ -1411,9 +1468,7 @@
     });
     current.playbackController.attach();
 
-    if (current.wasPlaying) {
-      await playVideo(current, "startup_ready");
-    }
+    await playVideo(current, "startup_ready");
     current.startupPreparing = false;
     const startupPaused = video.paused;
     current.paused = startupPaused;
