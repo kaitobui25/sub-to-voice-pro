@@ -843,8 +843,9 @@
             current.estimatedTtsSeconds = current.estimatedTtsSeconds == null
               ? ttsDuration : current.estimatedTtsSeconds * 0.75 + ttsDuration * 0.25;
             const sentence = current.sentences[index];
-            current.estimatedRenderRatio = AudioPreparation.observe(current.estimatedRenderRatio,
+            current.renderEstimate = AudioPreparation.observe(current.renderEstimate,
               ttsDuration, sentence.end - sentence.start, current.audioPreparation);
+            current.estimatedRenderRatio = current.renderEstimate?.ratio;
             options.onReady?.(index);
           } catch (error) {
             trace.ttsError = error?.message || String(error);
@@ -929,6 +930,7 @@
         current.waitingForAudio = index;
         const trace = traceFor(current, index);
         trace.waitStart = traceTime(trace);
+        preparationReadiness(current, index, "resume");
         pauseVideo(current, current.sentences[current.waitingForAudio]?._buffer ? "audio_schedule_pending" : "audio_not_ready");
       }
       return;
@@ -938,23 +940,41 @@
     current.waitingForAudio = index;
     const trace = traceFor(current, index);
     trace.waitStart = traceTime(trace);
+    preparationReadiness(current, index, "resume");
     recordScheduleDecision(current, { index, status: "waiting", videoTime: now });
     pauseVideo(current, "audio_not_ready");
   }
 
-  function preparationReadiness(current, start, phase) {
+  function preparationReadiness(current, start, phase, plan) {
     const rate = PlaybackClock.normalizeRate(PlaybackSyncController.getRate(current.video));
-    const target = AudioPreparation.targetSeconds(current.audioPreparation,
+    let target = AudioPreparation.targetSeconds(current.audioPreparation,
       current.estimatedRenderRatio, rate, phase);
-    return AudioPreparation.readiness(current.sentences, start, current.video.currentTime,
+    const now = globalThis.performance?.now?.() ?? Date.now();
+    if (phase === "resume") {
+      if (!current.bufferWait || current.bufferWait.index !== start) {
+        current.bufferWait = { index: start, targetSeconds: target, startedAt: now };
+        recordPlaybackEvent(current, "buffer_wait", {
+          targetSeconds: target, waitBudgetSeconds: current.audioPreparation.resumeMaxWaitSeconds,
+          renderRatio: current.estimatedRenderRatio
+        });
+      }
+      plan = current.bufferWait;
+    }
+    if (plan) target = plan.targetSeconds;
+    const state = AudioPreparation.readiness(current.sentences, start, current.video.currentTime,
       target, current.playedSentenceIndexes);
+    const waitedSeconds = plan ? (now - plan.startedAt) / 1000 : 0;
+    const maxWait = phase === "startup" ? current.audioPreparation.startupMaxWaitSeconds : current.audioPreparation.resumeMaxWaitSeconds;
+    return { ...state, waitedSeconds, waitBudgetSeconds: maxWait,
+      deadlineReached: waitedSeconds >= maxWait,
+      canResume: state.ready || (waitedSeconds >= maxWait && Boolean(current.sentences[start]?._buffer)) };
   }
 
   function maybeResumePreparedAudio(current) {
     const index = current.waitingForAudio;
     if (index == null || current.resumePending || !current.sentences[index]?._buffer) return;
     const state = preparationReadiness(current, index, "resume");
-    if (current.audioPreparation.groupedResume && !state.ready) return;
+    if (current.audioPreparation.groupedResume && !state.canResume) return;
     recordPlaybackEvent(current, "buffer_resume", { ...state, renderRatio: current.estimatedRenderRatio });
     current.resumePending = true;
     const generation = current.seekGeneration;
@@ -967,6 +987,7 @@
     while (current === session && !current.stopFlag) {
       await new Promise((resolve) => setTimeout(resolve, current.settings.multiVoice ? 250 : 1000));
       if (current !== session || current.stopFlag) return;
+      if (current.waitingForAudio != null) maybeResumePreparedAudio(current);
       // A scheduler-induced pause is not a user pause. Keep rendering while
       // waiting so the missing sentence can be translated and synthesized;
       // otherwise multi-voice can deadlock at the first uncached cue.
@@ -1101,6 +1122,8 @@
       playbackController: null,
       audioPreparation: AudioPreparation.normalizeConfig(settings.audioPreparation),
       estimatedRenderRatio: null,
+      renderEstimate: null,
+      bufferWait: null,
       resumePending: false,
       abortController,
       prepareAbortController: new AbortController(),
@@ -1197,20 +1220,26 @@
       ]);
       if (current !== session || current.stopFlag) return { ok: false, error: "Cancelled." };
       setProbe("Preparing voices…");
+      const preparationStartedAt = globalThis.performance?.now?.() ?? Date.now();
       await renderWaveTTS(current, firstWave.start, firstWave.end);
       if (current.settings.multiVoice && current.audioPreparation.adaptiveStartup) {
-        let state = preparationReadiness(current, firstWave.start, "startup");
-        if (!state.ready) {
+        const plan = {
+          startedAt: preparationStartedAt,
+          targetSeconds: AudioPreparation.targetSeconds(current.audioPreparation, current.estimatedRenderRatio,
+            PlaybackClock.normalizeRate(PlaybackSyncController.getRate(video)), "startup")
+        };
+        let state = preparationReadiness(current, firstWave.start, "startup", plan);
+        if (!state.canResume) {
           const horizon = video.currentTime + current.audioPreparation.maxBufferSeconds;
           const boundary = sentences.findIndex((sentence) => sentence.start > horizon);
           const end = boundary === -1 ? sentences.length : boundary;
           if (end > firstWave.end) await translateBatch(current, firstWave.end, end);
         }
-        while (!state.ready && current === session && !current.stopFlag) {
+        while (!state.canResume && current === session && !current.stopFlag) {
           const index = firstWave.end;
           await renderWaveTTS(current, index, index + 1);
           firstWave.end += 1;
-          state = preparationReadiness(current, firstWave.start, "startup");
+          state = preparationReadiness(current, firstWave.start, "startup", plan);
         }
         if (current !== session || current.stopFlag) return { ok: false, error: "Cancelled." };
         recordPlaybackEvent(current, "buffer_startup", { ...state, renderRatio: current.estimatedRenderRatio });
@@ -1270,12 +1299,13 @@
       const waitingIndex = current.waitingForAudio;
       current.waitingForAudio = null;
       if (waitingIndex != null && (!current.sentences[waitingIndex]?._buffer ||
-          (current.audioPreparation.groupedResume && !preparationReadiness(current, waitingIndex, "resume").ready))) {
+          (current.audioPreparation.groupedResume && !preparationReadiness(current, waitingIndex, "resume").canResume))) {
         current.waitingForAudio = waitingIndex;
         pauseVideo(current, current.sentences[current.waitingForAudio]?._buffer ? "audio_schedule_pending" : "audio_not_ready");
         return;
       }
       if (waitingIndex != null) {
+        current.bufferWait = null;
         const trace = traceFor(current, waitingIndex);
         trace.waitEnd = traceTime(trace);
         recordScheduledAudio(current, AudioScheduler.scheduleWindow(
@@ -1316,6 +1346,7 @@
         current.renderAbortController = new AbortController();
         current.renderTail = Promise.resolve();
         current.waitingForAudio = null;
+        current.bufferWait = null;
         current.resumePending = false;
       }
       current.playbackController.refreshAnchor();

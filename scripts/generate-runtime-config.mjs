@@ -164,7 +164,11 @@ const runtimeConfig = {
     startupSeconds: config.audio_preparation?.startup_seconds,
     resumeSeconds: config.audio_preparation?.resume_seconds,
     maxBufferSeconds: config.audio_preparation?.max_buffer_seconds,
-    planningSeconds: config.audio_preparation?.planning_seconds
+    planningSeconds: config.audio_preparation?.planning_seconds,
+    startupMaxWaitSeconds: config.audio_preparation?.startup_max_wait_seconds,
+    resumeMaxWaitSeconds: config.audio_preparation?.resume_max_wait_seconds,
+    estimationWindow: config.audio_preparation?.estimation_window,
+    estimationMinVideoSeconds: config.audio_preparation?.estimation_min_video_seconds
   },
   playbackSync: {
     lookaheadMs: config.playback_sync?.lookahead_ms == null ? 30000 : config.playback_sync.lookahead_ms,

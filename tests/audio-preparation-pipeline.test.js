@@ -7,6 +7,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 function setup(adaptiveStartup = false) {
+  let clockMs = 0;
   const listeners = new Map();
   const video = {
     paused: false, currentTime: 0, volume: 1, muted: false,
@@ -34,6 +35,7 @@ function setup(adaptiveStartup = false) {
     async close() {}
   }
   const context = {
+    performance: { now: () => clockMs },
     location: { href: "https://www.youtube.com/watch?v=test-video" },
     window: { AudioContext },
     document: {
@@ -103,7 +105,8 @@ function setup(adaptiveStartup = false) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../content.js"), "utf8"), context);
   const send = (type) => new Promise((resolve) => handler({ type }, {}, resolve));
 
-  return { video, listeners, timers, finishFourth, finishFifth, send };
+  return { video, listeners, timers, finishFourth, finishFifth, send,
+    advanceClock: (ms) => { clockMs += ms; } };
 }
 
 async function flush() {
@@ -169,5 +172,51 @@ test("seek during grouped buffering changes the waiting cue and resumes at the n
   assert.equal(video.paused, false);
   const log = (await send("CONTENT_GET_DIAGNOSTIC_LOG")).log;
   assert.ok(log.events.some((event) => event.type === "buffer_seek" && event.sentenceId === 5));
+  await send("CONTENT_STOP");
+});
+
+test("resume budget releases playback with the current cue ready even while the next TTS is pending", async () => {
+  const { video, timers, finishFourth, finishFifth, advanceClock, send } = setup();
+  await send("CONTENT_START");
+  timers.shift()();
+  await flush();
+  video.currentTime = 2.6;
+  timers.shift()();
+  await flush();
+  advanceClock(4000);
+  finishFourth();
+  await flush();
+  assert.equal(video.paused, true);
+  advanceClock(1100);
+  timers.shift()();
+  await flush();
+  assert.equal(video.paused, false);
+  const log = (await send("CONTENT_GET_DIAGNOSTIC_LOG")).log;
+  const wait = log.events.find((event) => event.type === "buffer_wait");
+  const resume = log.events.find((event) => event.type === "buffer_resume");
+  assert.equal(resume.deadlineReached, true);
+  assert.equal(resume.ready, false);
+  assert.equal(resume.targetSeconds, wait.targetSeconds);
+  assert.ok(resume.waitedSeconds >= resume.waitBudgetSeconds);
+  finishFifth();
+  await send("CONTENT_STOP");
+});
+
+test("budget expiry never resumes before the required cue has audio", async () => {
+  const { video, timers, finishFourth, finishFifth, advanceClock, send } = setup();
+  await send("CONTENT_START");
+  timers.shift()();
+  await flush();
+  video.currentTime = 2.6;
+  timers.shift()();
+  await flush();
+  advanceClock(6000);
+  timers.shift()();
+  await flush();
+  assert.equal(video.paused, true);
+  finishFourth();
+  await flush();
+  assert.equal(video.paused, false);
+  finishFifth();
   await send("CONTENT_STOP");
 });

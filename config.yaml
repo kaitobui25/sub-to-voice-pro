@@ -95,7 +95,11 @@ playback_sync:
 audio_preparation:
   adaptive_startup: true
   grouped_resume: true
-  startup_seconds: 8
-  resume_seconds: 8
-  max_buffer_seconds: 30
-  planning_seconds: 60
+  startup_seconds: 6
+  resume_seconds: 3
+  max_buffer_seconds: 8
+  planning_seconds: 10
+  startup_max_wait_seconds: 8
+  resume_max_wait_seconds: 5
+  estimation_window: 12
+  estimation_min_video_seconds: 8

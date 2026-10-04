@@ -12,25 +12,26 @@ const sentences = log.sentences.filter((sentence) => sentence.end >= videoStart 
 if (!sentences.length) throw new Error("Log contains no completed TTS samples.");
 
 function replay(adaptiveStartup, groupedResume) {
-  const config = preparation.normalizeConfig({ adaptiveStartup, groupedResume, ...log.settings.audioPreparation });
+  const config = preparation.normalizeConfig({ adaptiveStartup, groupedResume });
   config.adaptiveStartup = adaptiveStartup;
   config.groupedResume = groupedResume;
   let elapsed = 0;
   const readyAt = sentences.map((sentence) => (elapsed += sentence.cost));
   let wall = readyAt[Math.min(1, sentences.length - 1)];
-  let ratio = null;
+  let estimate = null;
   let observed = 0;
-  function state(index, videoTime, phase) {
+  function state(index, videoTime, phase, fixedTarget) {
     while (observed < sentences.length && readyAt[observed] <= wall) {
       const sample = sentences[observed++];
-      ratio = preparation.observe(ratio, sample.cost, sample.end - sample.start, config);
+      estimate = preparation.observe(estimate, sample.cost, sample.end - sample.start, config);
     }
     const prepared = sentences.map((sentence, offset) => ({ ...sentence, _buffer: readyAt[offset] <= wall ? {} : null }));
     return preparation.readiness(prepared, index, videoTime,
-      preparation.targetSeconds(config, ratio, 1, phase));
+      fixedTarget ?? preparation.targetSeconds(config, estimate?.ratio, 1, phase));
   }
   if (adaptiveStartup) {
-    while (!state(0, videoStart, "startup").ready) {
+    const target = state(0, videoStart, "startup").targetSeconds;
+    while (!state(0, videoStart, "startup", target).ready && wall < config.startupMaxWaitSeconds) {
       wall = readyAt.find((value) => value > wall);
     }
   }
@@ -44,9 +45,13 @@ function replay(adaptiveStartup, groupedResume) {
     video = target;
     if (readyAt[index] > wall) {
       const before = wall;
+      const target = state(index, video, "resume").targetSeconds;
       wall = readyAt[index];
       if (groupedResume) {
-        while (!state(index, video, "resume").ready) wall = readyAt.find((value) => value > wall);
+        const deadline = before + config.resumeMaxWaitSeconds;
+        while (!state(index, video, "resume", target).ready && wall < deadline) {
+          wall = Math.min(readyAt.find((value) => value > wall), deadline);
+        }
       }
       pauseCount += 1;
       pauseSeconds += wall - before;
