@@ -91,3 +91,11 @@ playback_sync:
   lookahead_ms: 30000
   late_threshold_ms: 500
   start_epsilon_ms: 20
+
+audio_preparation:
+  adaptive_startup: true
+  grouped_resume: true
+  startup_seconds: 8
+  resume_seconds: 8
+  max_buffer_seconds: 30
+  planning_seconds: 60

@@ -30,6 +30,7 @@
         "lib/playback-clock.js",
         "lib/playback-sync-controller.js",
         "lib/audio-scheduler.js",
+        "lib/audio-preparation.js",
         "lib/provider-client.js",
         "content.js"
       ],

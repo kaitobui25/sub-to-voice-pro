@@ -80,6 +80,7 @@ function publicRuntimeSettings(config, selections) {
     multiVoiceLookaheadSeconds: config.speakerDetection?.lookaheadSeconds ?? 60,
     multiVoiceMaxLookaheadSeconds: config.speakerDetection?.maxLookaheadSeconds ?? 120,
     playbackSync: config.playbackSync || {},
+    audioPreparation: config.audioPreparation || {},
     voice: profile?.voice || null,
     speed: config.tts?.speed ?? 1,
     ttsConcurrency: Math.max(1, Math.floor(profile?.maxConcurrency ?? 5))

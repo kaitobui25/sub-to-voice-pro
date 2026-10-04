@@ -158,6 +158,14 @@ const runtimeConfig = {
     originalVolume: config.audio?.original_volume == null ? 18 : config.audio.original_volume,
     voiceVolume: config.audio?.voice_volume == null ? 100 : config.audio.voice_volume
   },
+  audioPreparation: {
+    adaptiveStartup: config.audio_preparation?.adaptive_startup === true,
+    groupedResume: config.audio_preparation?.grouped_resume === true,
+    startupSeconds: config.audio_preparation?.startup_seconds,
+    resumeSeconds: config.audio_preparation?.resume_seconds,
+    maxBufferSeconds: config.audio_preparation?.max_buffer_seconds,
+    planningSeconds: config.audio_preparation?.planning_seconds
+  },
   playbackSync: {
     lookaheadMs: config.playback_sync?.lookahead_ms == null ? 30000 : config.playback_sync.lookahead_ms,
     lateThresholdMs: config.playback_sync?.late_threshold_ms == null ? 500 : config.playback_sync.late_threshold_ms,

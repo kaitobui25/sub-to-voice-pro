@@ -14,6 +14,8 @@
   if (!PlaybackSyncController) throw new Error("Sub-to-Voice playback sync controller did not load.");
   const AudioScheduler = globalThis.SubToVoiceAudioScheduler;
   if (!AudioScheduler) throw new Error("Sub-to-Voice audio scheduler did not load.");
+  const AudioPreparation = globalThis.SubToVoiceAudioPreparation;
+  if (!AudioPreparation) throw new Error("Sub-to-Voice audio preparation did not load.");
 
   const DEFAULT_RENDER_CONCURRENCY = 5;
   const VOICE_GAIN_MAX = 2;
@@ -398,7 +400,8 @@
         multiVoice: current.settings.multiVoice,
         translationProvider: current.settings.translationProvider,
         ttsProvider: current.settings.ttsProvider,
-        playbackSync: playbackSyncConfig(current)
+        playbackSync: playbackSyncConfig(current),
+        audioPreparation: current.audioPreparation
       },
       eventLimit: MAX_PLAYBACK_EVENTS, droppedEvents: first,
       events: Array.from({ length: count - first }, (_, offset) =>
@@ -814,7 +817,7 @@
       async () => {
         while (cursor < queue.length) {
           if (current !== session || current.stopFlag) return;
-        const index = queue[cursor++];
+          const index = queue[cursor++];
           const trace = traceFor(current, index);
           trace.ttsStart = traceTime(trace);
           trace.ttsQueueWaitMs = Math.max(0, (trace.ttsStart - (trace.ttsQueuedAt ?? trace.ttsStart)) * 1000);
@@ -839,6 +842,9 @@
             const ttsDuration = trace.ttsEnd - trace.ttsStart;
             current.estimatedTtsSeconds = current.estimatedTtsSeconds == null
               ? ttsDuration : current.estimatedTtsSeconds * 0.75 + ttsDuration * 0.25;
+            const sentence = current.sentences[index];
+            current.estimatedRenderRatio = AudioPreparation.observe(current.estimatedRenderRatio,
+              ttsDuration, sentence.end - sentence.start, current.audioPreparation);
             options.onReady?.(index);
           } catch (error) {
             trace.ttsError = error?.message || String(error);
@@ -878,8 +884,8 @@
         signal,
         onReady(index) {
           if (current !== session || current.stopFlag || signal.aborted) return;
-          if (current.waitingForAudio === index) {
-            void playVideo(current, "resume_waiting_audio");
+          if (current.waitingForAudio != null) {
+            maybeResumePreparedAudio(current);
           } else if (!current.video.paused) {
             recordScheduledAudio(current, scheduleWithTrace(current, index, index + 1));
             if (index === current.nextAudioIndex &&
@@ -936,6 +942,27 @@
     pauseVideo(current, "audio_not_ready");
   }
 
+  function preparationReadiness(current, start, phase) {
+    const rate = PlaybackClock.normalizeRate(PlaybackSyncController.getRate(current.video));
+    const target = AudioPreparation.targetSeconds(current.audioPreparation,
+      current.estimatedRenderRatio, rate, phase);
+    return AudioPreparation.readiness(current.sentences, start, current.video.currentTime,
+      target, current.playedSentenceIndexes);
+  }
+
+  function maybeResumePreparedAudio(current) {
+    const index = current.waitingForAudio;
+    if (index == null || current.resumePending || !current.sentences[index]?._buffer) return;
+    const state = preparationReadiness(current, index, "resume");
+    if (current.audioPreparation.groupedResume && !state.ready) return;
+    recordPlaybackEvent(current, "buffer_resume", { ...state, renderRatio: current.estimatedRenderRatio });
+    current.resumePending = true;
+    const generation = current.seekGeneration;
+    void playVideo(current, "resume_waiting_audio").finally(() => {
+      if (generation === current.seekGeneration) current.resumePending = false;
+    });
+  }
+
   async function runRollingRenderer(current) {
     while (current === session && !current.stopFlag) {
       await new Promise((resolve) => setTimeout(resolve, current.settings.multiVoice ? 250 : 1000));
@@ -957,8 +984,8 @@
         current.settings.renderBatchSize ?? current.settings.speakerChunkSize ?? 8
       ));
       const multiLookahead = current.settings.multiVoice ? Math.min(
-        current.settings.multiVoiceMaxLookaheadSeconds ?? 120,
-        Math.max(current.settings.multiVoiceLookaheadSeconds ?? 60,
+        Math.max(current.settings.multiVoiceMaxLookaheadSeconds ?? 120, current.audioPreparation.maxBufferSeconds),
+        Math.max(current.settings.multiVoiceLookaheadSeconds ?? 60, current.audioPreparation.maxBufferSeconds,
           (current.estimatedTtsSeconds || 0) * renderBatchSize)
       ) : 0;
       const horizon = videoTime + (current.settings.multiVoice
@@ -1072,6 +1099,9 @@
       playbackSync,
       playbackClock,
       playbackController: null,
+      audioPreparation: AudioPreparation.normalizeConfig(settings.audioPreparation),
+      estimatedRenderRatio: null,
+      resumePending: false,
       abortController,
       prepareAbortController: new AbortController(),
       sentences: [],
@@ -1168,6 +1198,23 @@
       if (current !== session || current.stopFlag) return { ok: false, error: "Cancelled." };
       setProbe("Preparing voices…");
       await renderWaveTTS(current, firstWave.start, firstWave.end);
+      if (current.settings.multiVoice && current.audioPreparation.adaptiveStartup) {
+        let state = preparationReadiness(current, firstWave.start, "startup");
+        if (!state.ready) {
+          const horizon = video.currentTime + current.audioPreparation.maxBufferSeconds;
+          const boundary = sentences.findIndex((sentence) => sentence.start > horizon);
+          const end = boundary === -1 ? sentences.length : boundary;
+          if (end > firstWave.end) await translateBatch(current, firstWave.end, end);
+        }
+        while (!state.ready && current === session && !current.stopFlag) {
+          const index = firstWave.end;
+          await renderWaveTTS(current, index, index + 1);
+          firstWave.end += 1;
+          state = preparationReadiness(current, firstWave.start, "startup");
+        }
+        if (current !== session || current.stopFlag) return { ok: false, error: "Cancelled." };
+        recordPlaybackEvent(current, "buffer_startup", { ...state, renderRatio: current.estimatedRenderRatio });
+      }
     } catch (error) {
       if (current !== session || current.stopFlag || abortController.signal.aborted) {
         return { ok: false, error: "Cancelled." };
@@ -1202,9 +1249,7 @@
       if (current.waitingForAudio != null) {
         closeScheduledAudio(current);
         AudioScheduler.cancelPendingSources(current);
-        if (current.sentences[current.waitingForAudio]?._buffer) {
-          void playVideo(current, "resume_waiting_audio");
-        }
+        maybeResumePreparedAudio(current);
         return;
       }
       closeScheduledAudio(current);
@@ -1224,7 +1269,8 @@
       current.playbackController.refreshAnchor();
       const waitingIndex = current.waitingForAudio;
       current.waitingForAudio = null;
-      if (waitingIndex != null && !current.sentences[waitingIndex]?._buffer) {
+      if (waitingIndex != null && (!current.sentences[waitingIndex]?._buffer ||
+          (current.audioPreparation.groupedResume && !preparationReadiness(current, waitingIndex, "resume").ready))) {
         current.waitingForAudio = waitingIndex;
         pauseVideo(current, current.sentences[current.waitingForAudio]?._buffer ? "audio_schedule_pending" : "audio_not_ready");
         return;
@@ -1270,6 +1316,7 @@
         current.renderAbortController = new AbortController();
         current.renderTail = Promise.resolve();
         current.waitingForAudio = null;
+        current.resumePending = false;
       }
       current.playbackController.refreshAnchor();
       const window = AudioScheduler.scheduleAroundPlayhead(current, current.video, schedulerOptions(current, {
@@ -1283,7 +1330,18 @@
                current.playedSentenceIndexes.has(current.nextAudioIndex)) current.nextAudioIndex += 1;
       } else if (window.start < current.renderCursor) current.renderCursor = window.start;
       updateLiveDisplay(current);
-      if (wasWaitingForAudio) void playVideo(current, "resume_waiting_audio");
+      if (wasWaitingForAudio) {
+        if (current.settings.multiVoice && current.audioPreparation.groupedResume &&
+            current.nextAudioIndex < current.sentences.length) {
+          current.waitingForAudio = current.nextAudioIndex;
+          const trace = traceFor(current, current.nextAudioIndex);
+          trace.waitStart = traceTime(trace);
+          recordPlaybackEvent(current, "buffer_seek", preparationReadiness(current, current.nextAudioIndex, "resume"));
+          maybeResumePreparedAudio(current);
+        } else {
+          void playVideo(current, "resume_waiting_audio");
+        }
+      }
     };
     const onRateChange = () => {
       if (current !== session || current.stopFlag) return;
@@ -1312,8 +1370,6 @@
       audioCtx,
       clock: current.playbackClock,
       resolveRate: (rate) => PlaybackClock.normalizeRate(rate),
-      onMediaEvent: (type) => recordPlaybackEvent(current, type, type === "error"
-        ? { mediaError: current.video.error?.code, message: current.video.error?.message } : {}),
       onMediaEvent: (type) => recordPlaybackEvent(current, type, type === "error"
         ? { mediaError: current.video.error?.code, message: current.video.error?.message } : {}),
       onPause,

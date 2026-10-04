@@ -62,6 +62,7 @@ test("Stop then Start reuses captions already fetched for the same video", async
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
     SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
     SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
+    SubToVoiceAudioPreparation: require("../lib/audio-preparation.js"),
     SubToVoiceProviderClient: {
       async getRuntimeSettings() { return { targetLanguage: "vi", sourceLanguage: "en", multiVoice, speakerChunkSize: 2 }; },
       async translateBatch({ lines }) { return lines; },

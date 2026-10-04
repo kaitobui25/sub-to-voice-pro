@@ -107,6 +107,7 @@ const coreFiles = [
   "lib/playback-clock.js",
   "lib/playback-sync-controller.js",
   "lib/audio-scheduler.js",
+  "lib/audio-preparation.js",
   "lib/provider-client.js",
   "lib/translation-core.js",
   "lib/tts-core.js"

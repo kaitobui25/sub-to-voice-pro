@@ -60,6 +60,7 @@ test("multi-voice schedules each finished sentence without waiting for the rest 
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
     SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
     SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
+    SubToVoiceAudioPreparation: require("../lib/audio-preparation.js"),
     SubToVoiceProviderClient: {
       async getRuntimeSettings() { return {
         sourceLanguage: "en", targetLanguage: "vi", multiVoice: true,
@@ -186,6 +187,7 @@ test("full-transcript speaker labeling splits only when the configured request l
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
     SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
     SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
+    SubToVoiceAudioPreparation: require("../lib/audio-preparation.js"),
     SubToVoiceProviderClient: {
       async getRuntimeSettings() { return {
         sourceLanguage: "en", targetLanguage: "vi", multiVoice: true,
@@ -265,6 +267,7 @@ test("multi-voice startup reports Paused when the YouTube video was already paus
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
     SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
     SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
+    SubToVoiceAudioPreparation: require("../lib/audio-preparation.js"),
     SubToVoiceProviderClient: {
       async getRuntimeSettings() { return { sourceLanguage: "en", targetLanguage: "vi", multiVoice: true, speakerChunkSize: 2, ttsConcurrency: 1 }; },
       async translateBatch({ lines }) { return lines; },
@@ -329,6 +332,7 @@ test("multi-voice startup includes a caption already active at the playhead", as
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
     SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
     SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
+    SubToVoiceAudioPreparation: require("../lib/audio-preparation.js"),
     SubToVoiceProviderClient: {
       async getRuntimeSettings() { return { sourceLanguage: "en", targetLanguage: "vi", multiVoice: true, speakerChunkSize: 2, ttsConcurrency: 1 }; },
       async translateBatch({ lines }) { return lines.map(() => "Dang noi."); },
@@ -411,6 +415,7 @@ test("multi-voice skips a materially late buffered cue instead of pausing foreve
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
     SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
     SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
+    SubToVoiceAudioPreparation: require("../lib/audio-preparation.js"),
     SubToVoiceProviderClient: {
       async getRuntimeSettings() { return { sourceLanguage: "en", targetLanguage: "vi", multiVoice: true, speakerChunkSize: 2, multiVoiceLookaheadSeconds: 60, ttsConcurrency: 1 }; },
       async translateBatch({ lines }) { return lines; }, async labelSpeakers({ lines }) { return lines.map(() => "S1"); },
@@ -469,6 +474,7 @@ test("speaker labeling failure falls back quickly to two stable voices", async (
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
     SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
     SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
+    SubToVoiceAudioPreparation: require("../lib/audio-preparation.js"),
     SubToVoiceProviderClient: {
       async getRuntimeSettings() { return { sourceLanguage: "en", targetLanguage: "vi", multiVoice: true, speakerVoiceCount: 2, speakerChunkSize: 8, ttsConcurrency: 1 }; },
       async translateBatch({ lines }) { return lines; },

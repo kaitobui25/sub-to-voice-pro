@@ -99,6 +99,7 @@ test("ratechange reuses decoded TTS buffers and retimes playback without re-synt
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
     SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
     SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
+    SubToVoiceAudioPreparation: require("../lib/audio-preparation.js"),
     SubToVoiceAudioScheduler: require("../lib/audio-scheduler.js"),
     SubToVoiceProviderClient: {
       async getRuntimeSettings() {
