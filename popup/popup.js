@@ -5,6 +5,7 @@ const volume = document.getElementById("original-volume");
 const volumeValue = document.getElementById("volume-value");
 const status = document.getElementById("status");
 const downloadTranscript = document.getElementById("download-transcript");
+const downloadDiagnostics = document.getElementById("download-diagnostics");
 const translationProvider = document.getElementById("translation-provider");
 const ttsProvider = document.getElementById("tts-provider");
 const voiceMode = document.getElementById("voice-mode");
@@ -45,6 +46,7 @@ async function initialize() {
     volumeValue.value = state.originalVolume + "%";
     volume.disabled = false;
     downloadTranscript.disabled = !state.canStart;
+    downloadDiagnostics.disabled = !state.canStart;
     translationProvider.value = state.translationSelection || "google";
     ttsProvider.value = state.ttsSelection || "vieneu";
     translationProvider.disabled = false;
@@ -138,6 +140,31 @@ voiceMode.addEventListener("change", async () => {
   }
 });
 
+function downloadFile(content, filename, type, bom = false) {
+  const url = URL.createObjectURL(new Blob(bom ? ["\uFEFF", content] : [content], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  try { link.click(); } finally {
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+}
+
+downloadDiagnostics.addEventListener("click", async () => {
+  downloadDiagnostics.disabled = true;
+  try {
+    const { log } = await request({ type: "GET_DIAGNOSTIC_LOG", tabId });
+    if (!log) throw new Error("Chưa có log. Hãy bật dịch và đọc voice trước.");
+    downloadFile(JSON.stringify(log, null, 2), `sub-to-voice-${log.videoId || "session"}-diagnostics.json`, "application/json;charset=utf-8");
+  } catch (error) {
+    showError(error);
+  } finally {
+    downloadDiagnostics.disabled = false;
+  }
+});
+
 downloadTranscript.addEventListener("click", async () => {
   downloadTranscript.disabled = true;
   try {
@@ -145,14 +172,7 @@ downloadTranscript.addEventListener("click", async () => {
     const transcript = reply.transcript;
     if (!transcript?.rows?.length) throw new Error("Chưa có phụ đề để tải.");
     const content = SubToVoiceTranscriptExport.format(transcript);
-    const url = URL.createObjectURL(new Blob(["\uFEFF", content], { type: "text/plain;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `sub-to-voice-${transcript.videoId || "transcript"}.txt`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadFile(content, `sub-to-voice-${transcript.videoId || "transcript"}.txt`, "text/plain;charset=utf-8", true);
   } catch (error) {
     showError(error);
   } finally {

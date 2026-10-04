@@ -30,6 +30,8 @@
   let lastUrl = location.href;
   let cachedCaptions = null;
   let lastTranscript = null;
+  let lastDiagnosticLog = null;
+  const MAX_PLAYBACK_EVENTS = 2000;
   let probeResizeObserver = null;
 
   function saveProbeLayout(root) {
@@ -351,6 +353,64 @@
     current.outputGain.gain.value = computeGain(current.settings.voiceVolume ?? 100);
   }
 
+  // Fixed-size ring: recording stays O(1), even during repeated pause/play loops.
+  function recordPlaybackEvent(current, type, details = {}) {
+    const video = current.video;
+    const index = current.waitingForAudio ?? current.nextAudioIndex;
+    const event = {
+      sequence: ++current.playbackEventCount,
+      elapsedMs: Math.round((globalThis.performance?.now?.() ?? Date.now()) - current.diagnosticStartedAt),
+      type, videoTime: video.currentTime, paused: video.paused,
+      readyState: video.readyState, networkState: video.networkState,
+      rate: PlaybackSyncController.getRate(video), audioContextState: current.audioCtx?.state,
+      sentenceId: Number.isInteger(index) ? index + 1 : null,
+      waitingForAudio: current.waitingForAudio != null,
+      audioReady: Boolean(current.sentences[index]?._buffer),
+      ...details
+    };
+    current.playbackEvents[(event.sequence - 1) % MAX_PLAYBACK_EVENTS] = event;
+  }
+
+  function pauseVideo(current, reason) {
+    recordPlaybackEvent(current, "pause_requested", { reason });
+    current.video.pause();
+  }
+
+  async function playVideo(current, reason) {
+    recordPlaybackEvent(current, "play_requested", { reason });
+    try {
+      await current.video.play();
+      recordPlaybackEvent(current, "play_resolved", { reason });
+    } catch (error) {
+      recordPlaybackEvent(current, "play_rejected", {
+        reason, error: error?.message || String(error), errorName: error?.name
+      });
+    }
+  }
+
+  function diagnosticSnapshot(current) {
+    const count = current.playbackEventCount;
+    const first = Math.max(0, count - MAX_PLAYBACK_EVENTS);
+    return {
+      schemaVersion: 1, videoId: current.videoId, startedAt: current.diagnosticStartedAtUtc,
+      exportedAt: new Date().toISOString(),
+      settings: {
+        multiVoice: current.settings.multiVoice,
+        translationProvider: current.settings.translationProvider,
+        ttsProvider: current.settings.ttsProvider,
+        playbackSync: playbackSyncConfig(current)
+      },
+      eventLimit: MAX_PLAYBACK_EVENTS, droppedEvents: first,
+      events: Array.from({ length: count - first }, (_, offset) =>
+        ({ ...current.playbackEvents[(first + offset) % MAX_PLAYBACK_EVENTS] })),
+      sentences: current.sentences.map((sentence, index) => ({
+        id: index + 1, start: sentence.start, end: sentence.end,
+        audioReady: Boolean(sentence._buffer), diagnostic: current.diagnostics[index]
+          ? { ...current.diagnostics[index] } : null
+      }))
+    };
+  }
+
   function traceFor(current, index) {
     return current.diagnostics[index] ||= { startedAt: globalThis.performance?.now?.() ?? Date.now() };
   }
@@ -391,6 +451,7 @@
   function recordScheduleDecision(current, decision) {
     const trace = traceFor(current, decision.index);
     trace.schedule = { ...decision, at: traceTime(trace) };
+    recordPlaybackEvent(current, "schedule_decision", { ...decision, sentenceId: decision.index + 1 });
   }
 
   function recordScheduledAudio(current, scheduled) {
@@ -806,7 +867,7 @@
         onReady(index) {
           if (current !== session || current.stopFlag || signal.aborted) return;
           if (current.waitingForAudio === index) {
-            void current.video.play().catch(() => {});
+            void playVideo(current, "resume_waiting_audio");
           } else if (!current.video.paused) {
             recordScheduledAudio(current, scheduleWithTrace(current, index, index + 1));
             if (index === current.nextAudioIndex &&
@@ -850,7 +911,7 @@
         current.waitingForAudio = index;
         const trace = traceFor(current, index);
         trace.waitStart = traceTime(trace);
-        current.video.pause();
+        pauseVideo(current, current.sentences[current.waitingForAudio]?._buffer ? "audio_schedule_pending" : "audio_not_ready");
       }
       return;
     }
@@ -860,7 +921,7 @@
     const trace = traceFor(current, index);
     trace.waitStart = traceTime(trace);
     recordScheduleDecision(current, { index, status: "waiting", videoTime: now });
-    current.video.pause();
+    pauseVideo(current, "audio_not_ready");
   }
 
   async function runRollingRenderer(current) {
@@ -950,6 +1011,7 @@
   async function startSubtitleFirstSession() {
     stopSession("restart", false);
     lastTranscript = null;
+    lastDiagnosticLog = null;
     const video = findVideo();
     if (!video) return { ok: false, error: "No video on this page." };
 
@@ -1004,6 +1066,10 @@
       rawCaptions: [],
       translations: [],
       diagnostics: [],
+      playbackEvents: [],
+      playbackEventCount: 0,
+      diagnosticStartedAt: globalThis.performance?.now?.() ?? Date.now(),
+      diagnosticStartedAtUtc: new Date().toISOString(),
       speakers: [],
       speakerRequestCount: 0,
       speakerFallbackBatchCount: 0,
@@ -1029,7 +1095,8 @@
     };
     session = current;
     setProbe("Loading captions…");
-    try { video.pause(); } catch {}
+    recordPlaybackEvent(current, "session_start");
+    try { pauseVideo(current, "startup_preparation"); } catch {}
 
     const targetLanguage = settings.targetLanguage || "vi";
     let result = cachedCaptions?.videoId === videoId &&
@@ -1053,7 +1120,7 @@
       session = null;
       try { audioCtx.close(); } catch {}
       if (current.wasPlaying) {
-        try { await video.play(); } catch {}
+        await playVideo(current, "startup_ready");
       }
       const message = "This phase requires a YouTube caption track.";
       setProbe(message);
@@ -1073,7 +1140,7 @@
       session = null;
       try { audioCtx.close(); } catch {}
       if (current.wasPlaying) {
-        try { await video.play(); } catch {}
+        await playVideo(current, "startup_ready");
       }
       const message = "No forward captions remain at this playhead.";
       setProbe(message);
@@ -1098,7 +1165,7 @@
       video.volume = current.originalVolume;
       video.muted = current.originalMuted;
       if (current.wasPlaying) {
-        try { await video.play(); } catch {}
+        await playVideo(current, "startup_ready");
       }
       const message = error?.message || String(error);
       setProbe("Dub startup failed", message);
@@ -1118,12 +1185,13 @@
 
     const onPause = () => {
       if (current !== session || current.stopFlag) return;
+      recordPlaybackEvent(current, "pause");
       current.paused = true;
       if (current.waitingForAudio != null) {
         closeScheduledAudio(current);
         AudioScheduler.cancelPendingSources(current);
         if (current.sentences[current.waitingForAudio]?._buffer) {
-          void current.video.play().catch(() => {});
+          void playVideo(current, "resume_waiting_audio");
         }
         return;
       }
@@ -1135,6 +1203,7 @@
     };
     const onPlay = async () => {
       if (current !== session || current.stopFlag) return;
+      recordPlaybackEvent(current, "play");
       current.paused = false;
       discardPendingAudio(current);
       AudioScheduler.cancelPendingSources(current);
@@ -1145,7 +1214,7 @@
       current.waitingForAudio = null;
       if (waitingIndex != null && !current.sentences[waitingIndex]?._buffer) {
         current.waitingForAudio = waitingIndex;
-        current.video.pause();
+        pauseVideo(current, current.sentences[current.waitingForAudio]?._buffer ? "audio_schedule_pending" : "audio_not_ready");
         return;
       }
       if (waitingIndex != null) {
@@ -1176,6 +1245,7 @@
     };
     const onSeeked = () => {
       if (current !== session || current.stopFlag) return;
+      recordPlaybackEvent(current, "seeked");
       const wasWaitingForAudio = current.waitingForAudio != null;
       discardPendingAudio(current);
       AudioScheduler.cancelPendingSources(current);
@@ -1201,10 +1271,11 @@
                current.playedSentenceIndexes.has(current.nextAudioIndex)) current.nextAudioIndex += 1;
       } else if (window.start < current.renderCursor) current.renderCursor = window.start;
       updateLiveDisplay(current);
-      if (wasWaitingForAudio) void current.video.play().catch(() => {});
+      if (wasWaitingForAudio) void playVideo(current, "resume_waiting_audio");
     };
     const onRateChange = () => {
       if (current !== session || current.stopFlag) return;
+      recordPlaybackEvent(current, "ratechange");
       current.playbackController.refreshAnchor();
       if (current.video.paused) return;
       const resync = AudioScheduler.resyncPendingSources(current);
@@ -1229,6 +1300,10 @@
       audioCtx,
       clock: current.playbackClock,
       resolveRate: (rate) => PlaybackClock.normalizeRate(rate),
+      onMediaEvent: (type) => recordPlaybackEvent(current, type, type === "error"
+        ? { mediaError: current.video.error?.code, message: current.video.error?.message } : {}),
+      onMediaEvent: (type) => recordPlaybackEvent(current, type, type === "error"
+        ? { mediaError: current.video.error?.code, message: current.video.error?.message } : {}),
       onPause,
       onPlay,
       onSeeked,
@@ -1238,7 +1313,7 @@
     current.playbackController.attach();
 
     if (current.wasPlaying) {
-      try { await video.play(); } catch {}
+      await playVideo(current, "startup_ready");
     }
     current.startupPreparing = false;
     const startupPaused = video.paused;
@@ -1256,7 +1331,9 @@
     const current = session;
     if (current) {
       closeScheduledAudio(current);
+      recordPlaybackEvent(current, "session_stop", { reason: stopReason });
       lastTranscript = transcriptSnapshot(current);
+      lastDiagnosticLog = diagnosticSnapshot(current);
       current.stopFlag = true;
       try { current.abortController.abort(); } catch {}
       try { current.prepareAbortController.abort(); } catch {}
@@ -1270,7 +1347,7 @@
         current.video.muted = current.originalMuted;
       } catch {}
       if (current.startupPreparing && current.wasPlaying && current.video.paused) {
-        try { void current.video.play().catch(() => {}); } catch {}
+        try { void playVideo(current, "resume_waiting_audio"); } catch {}
       }
     }
     session = null;
@@ -1306,6 +1383,9 @@
             applyVolumes(session);
           }
           sendResponse({ ok: true });
+          break;
+        case "CONTENT_GET_DIAGNOSTIC_LOG":
+          sendResponse({ ok: true, log: session ? diagnosticSnapshot(session) : lastDiagnosticLog });
           break;
         case "CONTENT_GET_TRANSCRIPT":
           sendResponse({ ok: true, transcript: session ? transcriptSnapshot(session) : lastTranscript });

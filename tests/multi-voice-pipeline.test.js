@@ -113,6 +113,11 @@ test("multi-voice schedules each finished sentence without waiting for the rest 
   for (let index = 0; index < 4; index += 1) await new Promise(setImmediate);
   assert.equal(video.paused, true);
 
+  const waitingLog = (await send("CONTENT_GET_DIAGNOSTIC_LOG")).log;
+  assert.ok(waitingLog.events.some((event) => event.type === "pause_requested" &&
+    event.reason === "audio_not_ready" && event.sentenceId === 4));
+  assert.equal(waitingLog.sentences.find((row) => row.id === 4).audioReady, false);
+
   finishFourth();
   for (let index = 0; index < 4; index += 1) await new Promise(setImmediate);
   assert.equal(video.paused, false);
@@ -121,7 +126,19 @@ test("multi-voice schedules each finished sentence without waiting for the rest 
   const resumed = (await send("CONTENT_GET_TRANSCRIPT")).transcript.rows.find((row) => row.id === 4);
   assert.equal(typeof resumed.diagnostic.waitStart, "number");
   assert.equal(typeof resumed.diagnostic.waitEnd, "number");
+  const detailed = (await send("CONTENT_GET_DIAGNOSTIC_LOG")).log;
+  assert.ok(detailed.events.some((event) => event.type === "play_resolved" &&
+    event.reason === "resume_waiting_audio"));
+  for (let index = 0; index < detailed.eventLimit + 5; index += 1) listeners.get("waiting")();
+  const bounded = (await send("CONTENT_GET_DIAGNOSTIC_LOG")).log;
+  assert.equal(bounded.events.length, bounded.eventLimit);
+  assert.ok(bounded.droppedEvents > 0);
+  assert.equal(bounded.events[0].sequence, bounded.droppedEvents + 1);
+  assert.ok(bounded.events.every((event, index) => index === 0 ||
+    event.sequence === bounded.events[index - 1].sequence + 1));
   await send("CONTENT_STOP");
+  const stopped = (await send("CONTENT_GET_DIAGNOSTIC_LOG")).log;
+  assert.equal(stopped.events.at(-1).type, "session_stop");
 });
 
 test("full-transcript speaker labeling splits only when the configured request limit is reached", async () => {

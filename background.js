@@ -70,6 +70,7 @@ function publicRuntimeSettings(config, selections) {
     originalVolume: config.audio?.originalVolume ?? 18,
     voiceVolume: config.audio?.voiceVolume ?? 100,
     ttsProvider: selections.tts,
+    translationProvider: selections.translation,
     multiVoice: selections.voiceMode === "multi" && Array.isArray(profile?.speakerVoices) && profile.speakerVoices.length > 1,
     speakerVoiceCount: Array.isArray(profile?.speakerVoices) ? profile.speakerVoices.length : 0,
     renderBatchSize: config.speakerDetection?.renderBatchSize ?? config.speakerDetection?.chunkSize ?? 8,
@@ -445,13 +446,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (!sender.tab && message?.type === "GET_TRANSCRIPT") {
+  if (!sender.tab && ["GET_TRANSCRIPT", "GET_DIAGNOSTIC_LOG"].includes(message?.type)) {
     (async () => {
       const tabId = Number(message.tabId);
       if (!Number.isInteger(tabId)) throw new Error("Open a YouTube video first.");
       const tab = await chrome.tabs.get(tabId);
       if (!isYouTubeWatchUrl(tab?.url)) throw new Error("Open a YouTube video first.");
-      const reply = await chrome.tabs.sendMessage(tabId, { type: "CONTENT_GET_TRANSCRIPT" });
+      const reply = await chrome.tabs.sendMessage(tabId, { type: message.type === "GET_DIAGNOSTIC_LOG" ? "CONTENT_GET_DIAGNOSTIC_LOG" : "CONTENT_GET_TRANSCRIPT" });
       sendResponse(reply?.ok ? reply : { ok: false, error: reply?.error || "No transcript is available yet." });
     })().catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
     return true;

@@ -8,20 +8,34 @@ const vm = require("node:vm");
 
 test("popup switch controls dubbing while volume is saved separately", async () => {
   const elements = new Map();
-  for (const id of ["enabled", "original-volume", "volume-value", "status", "download-transcript", "translation-provider", "tts-provider", "voice-mode", "speaker-panel", "speaker-list"]) {
+  for (const id of ["enabled", "original-volume", "volume-value", "status", "download-transcript", "download-diagnostics", "translation-provider", "tts-provider", "voice-mode", "speaker-panel", "speaker-list"]) {
     elements.set(id, { checked: false, disabled: true, value: "", textContent: "", handlers: {},
       addEventListener(type, handler) { this.handlers[type] = handler; } });
   }
   const calls = [];
+  const downloads = [];
+  const blobs = [];
   let popupVoiceMode = "single";
   const context = {
-    document: { getElementById(id) { return elements.get(id); } },
+    document: {
+      getElementById(id) { return elements.get(id); },
+      body: { appendChild() {} },
+      createElement() { return { click() { downloads.push(this.download); }, remove() {} }; }
+    },
+    Blob,
+    URL: {
+      createObjectURL(blob) { blobs.push(blob); return "blob:test"; },
+      revokeObjectURL() {}
+    },
     chrome: {
       tabs: { async query() { return [{ id: 7 }]; } },
       runtime: {
         onMessage: { addListener() {} },
         async sendMessage(message) {
           calls.push(message);
+          if (message.type === "GET_DIAGNOSTIC_LOG") return {
+            ok: true, log: { schemaVersion: 1, videoId: "test-video", events: [{ type: "pause" }] }
+          };
           if (message.type === "GET_POPUP_STATE") return {
             ok: true, enabled: false, canStart: true, status: "Ready", originalVolume: 18,
             translationSelection: "google", ttsSelection: "vieneu", voiceMode: popupVoiceMode,
@@ -84,4 +98,12 @@ test("popup switch controls dubbing while volume is saved separately", async () 
   assert.equal(calls.at(-2).value, "multi");
   assert.equal(elements.get("speaker-panel").hidden, false);
   assert.equal(elements.get("speaker-list").textContent, "S1 — Hải Đăng\nS2 — Thái Sơn");
+  const diagnostics = elements.get("download-diagnostics");
+  assert.equal(diagnostics.disabled, false);
+  await diagnostics.handlers.click();
+  assert.equal(calls.at(-1).type, "GET_DIAGNOSTIC_LOG");
+  assert.equal(calls.at(-1).tabId, 7);
+  assert.equal(downloads.at(-1), "sub-to-voice-test-video-diagnostics.json");
+  assert.equal(JSON.parse(await blobs.at(-1).text()).events[0].type, "pause");
+  assert.equal(diagnostics.disabled, false);
 });
