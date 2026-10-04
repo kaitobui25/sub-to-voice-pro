@@ -798,6 +798,8 @@
     const queue = [];
     for (let index = startIdx; index < endIdx; index += 1) {
       if (!current.sentences[index]?._buffer && current.translations[index]) {
+        const trace = traceFor(current, index);
+        trace.ttsQueuedAt ??= traceTime(trace);
         queue.push(index);
       }
     }
@@ -812,9 +814,10 @@
       async () => {
         while (cursor < queue.length) {
           if (current !== session || current.stopFlag) return;
-          const index = queue[cursor++];
+        const index = queue[cursor++];
           const trace = traceFor(current, index);
           trace.ttsStart = traceTime(trace);
+          trace.ttsQueueWaitMs = Math.max(0, (trace.ttsStart - (trace.ttsQueuedAt ?? trace.ttsStart)) * 1000);
           delete trace.ttsError;
           try {
             const result = await ProviderClient.synthesize({
@@ -825,16 +828,21 @@
               signal: options.signal || current.abortController.signal
             });
             if (current !== session || current.stopFlag || options.signal?.aborted) return;
+            trace.ttsTelemetry = { ...result.telemetry };
+            const decodeStarted = traceTime(trace);
             current.sentences[index]._buffer = await AudioScheduler.decodeCompleteAudio(
               current.audioCtx, result.audio
             );
             trace.ttsEnd = traceTime(trace);
+            trace.ttsTelemetry.audioDecodeMs = (trace.ttsEnd - decodeStarted) * 1000;
+            trace.ttsTelemetry.audioDurationSeconds = current.sentences[index]._buffer.duration;
             const ttsDuration = trace.ttsEnd - trace.ttsStart;
             current.estimatedTtsSeconds = current.estimatedTtsSeconds == null
               ? ttsDuration : current.estimatedTtsSeconds * 0.75 + ttsDuration * 0.25;
             options.onReady?.(index);
           } catch (error) {
             trace.ttsError = error?.message || String(error);
+            if (error?.telemetry) trace.ttsTelemetry = error.telemetry;
             throw error;
           }
         }
@@ -859,6 +867,10 @@
   }
 
   function queueMultiVoiceAudio(current, start, end) {
+    for (let index = start; index < end; index += 1) {
+      const trace = traceFor(current, index);
+      trace.ttsQueuedAt = traceTime(trace);
+    }
     const signal = current.renderAbortController.signal;
     current.renderTail = current.renderTail.then(async () => {
       if (current !== session || current.stopFlag || signal.aborted) return;

@@ -7,6 +7,33 @@ const {
   repairStreamingWavHeader
 } = require("../lib/providers/vieneu.js");
 
+test("VieNeu telemetry separates busy retries, queue, transfer and server inference", async () => {
+  let attempts = 0;
+  const provider = createVieNeuTTSProvider({
+    baseUrl: "http://127.0.0.1:8000/telemetry-test/v1", model: "test", voice: "test", sampleRate: 48000,
+    busyRetryTimeoutMs: 1000, busyRetryDelayMs: 1,
+    fetchImpl: async (url) => {
+      if (url.endsWith("/health")) return { ok: true, json: async () => ({ backend: "onnx", active: 1, waiting: 0 }) };
+      if (url.includes("/diagnostics/")) return { ok: true, json: async () => ({ device: "cpu", inferenceMs: 80 }) };
+      attempts += 1;
+      return {
+        ok: attempts > 1, status: attempts === 1 ? 429 : 200,
+        headers: { get: (name) => ({ "x-request-id": "test-request", "x-vieneu-queue-ms": "12" }[name] ?? null) },
+        arrayBuffer: async () => makeStreamingWav()
+      };
+    }
+  });
+  const { telemetry } = await provider.synthesize({ text: "test" });
+  assert.equal(telemetry.busyRetryCount, 1);
+  assert.ok(telemetry.busyWaitMs >= 0);
+  assert.deepEqual(telemetry.attempts.map((attempt) => attempt.status), [429, 200]);
+  assert.equal(telemetry.attempts[1].serverQueueMs, 12);
+  assert.ok(telemetry.attempts[1].bodyMs >= 0);
+  assert.equal(telemetry.serverRequest.device, "cpu");
+  assert.equal(telemetry.serverRequest.inferenceMs, 80);
+  assert.equal(telemetry.audioBytes, 48);
+});
+
 function makeStreamingWav() {
   const bytes = new Uint8Array(48);
   bytes.set(Buffer.from("RIFF"), 0);

@@ -361,12 +361,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const controller = new AbortController();
     if (requestId) providerRequestControllers.set(requestId, controller);
     synthesizeWithConfiguredProvider(message, controller.signal).then(
-      (result) => sendResponse({
+      (result) => {
+        const started = performance.now();
+        const audioBase64 = arrayBufferToBase64(result.audio);
+        sendResponse({
         ok: true,
-        audioBase64: arrayBufferToBase64(result.audio),
-        mimeType: result.mimeType
-      }),
-      (error) => sendResponse({ ok: false, error: error?.message || String(error) })
+        audioBase64,
+        mimeType: result.mimeType,
+        telemetry: { ...result.telemetry, base64EncodeMs: performance.now() - started }
+      });
+      },
+      (error) => sendResponse({ ok: false, error: error?.message || String(error), telemetry: error?.telemetry })
     ).finally(() => {
       if (requestId) providerRequestControllers.delete(requestId);
     });
