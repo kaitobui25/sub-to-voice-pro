@@ -17,6 +17,75 @@ test.beforeEach(() => {
   _resetModelStateForTests();
 });
 
+test("configured translation batches are packed independently of the default ten-line limit", async () => {
+  const registry = new TranslationProviderRegistry();
+  const batches = [];
+  registry.register("test", { async translateBatch({ lines }) { batches.push(lines.length); return lines; } });
+  const manager = new TranslationManager({ registry, providerName: "test", batchLimits: { maxLines: 100, maxChars: 16000 } });
+  const lines = Array.from({ length: 240 }, (_, i) => "line " + i);
+  assert.deepEqual(await manager.translateBatch({ lines, targetLanguage: "vi" }), lines);
+  assert.deepEqual(batches, [100, 100, 40]);
+});
+
+test("translation packing accounts for JSON escaping, prompt and preceding context", async () => {
+  const registry = new TranslationProviderRegistry();
+  const requests = [];
+  registry.register("test", { async translateBatch(request) { requests.push(request); return request.lines; } });
+  const manager = new TranslationManager({ registry, providerName: "test", contextSize: 2,
+    batchLimits: { maxLines: 100, maxChars: 4000 } });
+  const lines = Array.from({ length: 20 }, (_, i) => (i + ' "quoted\\text" '.repeat(12)).trim());
+  assert.deepEqual(await manager.translateBatch({ lines, targetLanguage: "vi", context: ["Previous sentence."] }), lines);
+  assert.ok(requests.length > 1);
+  assert.ok(requests.every(request => request.prompt.length <= 4000));
+  assert.match(requests[0].prompt, /Previous sentence/);
+  assert.ok(requests[1].prompt.includes(JSON.stringify(requests[0].lines.at(-1))));
+});
+
+test("one oversized translation cue fails explicitly instead of bypassing its budget", async () => {
+  const manager = new TranslationManager({ registry: new TranslationProviderRegistry(), providerName: "test",
+    batchLimits: { maxLines: 100, maxChars: 2000 } });
+  await assert.rejects(manager.translateBatch({ lines: ["x".repeat(3000)], targetLanguage: "vi" }), /input budget/);
+});
+
+test("Gemini rotates successful calls and logs quota and invalid output attempts without secrets", async () => {
+  const seen = [];
+  const attempts = [];
+  const provider = createGeminiProvider({ apiKey: "test-secret", baseUrl: "https://attempts.test/v1beta",
+    models: ["one", "two", "three"], retryInvalidResponse: true, onAttempt: row => attempts.push(row),
+    validateOutput(output) { if (output.length !== 1) throw new Error("wrong count"); return output; },
+    fetchImpl: async url => {
+      const model = url.match(/models\/([^:]+)/)[1];
+      seen.push(model);
+      if (seen.length === 1) return { ok: false, status: 429, headers: { get: () => "2" },
+        async text() { return "quota requests_per_minute test-secret"; } };
+      const text = seen.length === 2 ? '{"lines":[]}' : '{"lines":["ok"]}';
+      return { ok: true, status: 200, async json() {
+        return { candidates: [{ content: { parts: [{ text }] }, finishReason: "STOP" }],
+          usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } };
+      } };
+    }
+  });
+  assert.deepEqual(await provider.translateBatch({ lines: ["a"], batchStart: 7, prompt: "prompt" }), ["ok"]);
+  assert.deepEqual(seen, ["one", "two", "three"]);
+  assert.equal(attempts[0].httpStatus, 429);
+  assert.equal(attempts[0].retryAfterMs, 2000);
+  assert.match(attempts[0].error, /requests_per_minute/);
+  assert.equal(attempts[1].errorType, "invalid_output");
+  assert.equal(attempts[2].outcome, "success");
+  assert.equal(attempts[2].batchStart, 7);
+  assert.equal(attempts[2].usage.promptTokenCount, 10);
+  assert.equal(JSON.stringify(attempts).includes("test-secret"), false);
+});
+
+test("Gemini round robin persists when a new provider instance is created for each batch", async () => {
+  const seen = [];
+  const options = { apiKey: "key", baseUrl: "https://rotation.test/v1beta", models: ["one", "two", "three"],
+    fetchImpl: async url => { seen.push(url.match(/models\/([^:]+)/)[1]); return { ok: true, status: 200,
+      async json() { return { candidates: [{ content: { parts: [{ text: '{"lines":["ok"]}' }] } }] }; } }; } };
+  for (let i = 0; i < 4; i++) await createGeminiProvider(options).translateBatch({ prompt: "p" });
+  assert.deepEqual(seen, ["one", "two", "three", "one"]);
+});
+
 function makeManager(provider) {
   const registry = new TranslationProviderRegistry();
   registry.register("test", provider);
@@ -33,7 +102,7 @@ test("buildDubbingPrompt preserves Echoly dubbing constraints", () => {
     sourceLanguage: "English",
     targetLanguage: "Vietnamese"
   });
-  assert.match(prompt, /exactly 1 strings in the same order/);
+  assert.match(prompt, /exactly 1 objects in the same order/);
   assert.match(prompt, /Preserve names, brand names, and technical terms verbatim/);
   assert.match(prompt, /prefer shorter natural phrasing/);
   assert.match(prompt, /from English to Vietnamese/);

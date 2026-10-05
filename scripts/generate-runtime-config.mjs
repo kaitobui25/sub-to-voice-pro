@@ -127,6 +127,13 @@ const runtimeConfig = {
     },
     baseUrl: config.translation?.base_url,
     models: config.translation?.models || [],
+    batchLimits: {
+      maxLines: config.translation?.max_batch_lines || 100,
+      maxChars: config.translation?.max_prompt_chars || 16000
+    },
+    contextSize: config.translation?.context_size ?? 8,
+    maxOutputTokens: config.translation?.max_output_tokens || 16384,
+    modelTimeoutMs: config.translation?.model_timeout_ms || 60000,
     fallbackProviders: config.translation?.fallback_providers || [],
     google: {
       baseUrl: config.google_translate?.base_url,

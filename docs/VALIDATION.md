@@ -4,6 +4,38 @@ Validation date: 2026-09-29.
 
 ## Passed
 
+### Gemini translation batching (2026-10-05)
+
+- Gemini translation prefetch is independent of TTS queue capacity, bounded by
+  100 lines and 16,000 prompt characters. The manager accounts for serialized
+  IDs, JSON escaping, prompt instructions and bounded preceding context.
+- Only 3.5 Flash-Lite, 3.1 Flash-Lite and 2.5 Flash remain in the translation
+  rotation. Speaker detection and TTS keep their separate model configuration.
+- Each actual Gemini attempt returns sanitized model/status/duration/usage/error
+  metadata to the content diagnostic event ring. Invalid ID/count outputs retry
+  the next configured model. Timeout covers response body reading as well.
+- First live direct-translation experiment exposed merged/shifted meanings even
+  when output string count matched. This result was rejected. The revised prompt
+  uses explicit sentence IDs and forbids merging or moving meaning across cues.
+- Final indexed experiment used all 94 consecutive processed source cues
+  (199-292) from `sub-to-voice-U7apPfqHgvg.txt`, without sending Google drafts.
+  The production manager made one request per model: 3.5 Flash-Lite 9.70 s,
+  3.1 Flash-Lite 10.18 s, 2.5 Flash 28.36 s; all returned 94 ordered IDs and
+  nonempty translations. Each prompt was 8,346 characters / 2,272 API input
+  tokens. No final-run HTTP or structural error occurred.
+- Review confirmed cue 253 now means recorded dates, and the clean/list pair
+  conveys one prepared list. Quality still varies: 3.5 renders `whatnot` as
+  `thế nào` and market saturation as `bão hòa điên rồ`; 3.1 uses `hay đại loại
+  thế` and `thị trường quá bão hòa`. ASR ambiguity and occasional awkward
+  wording remain. IDs validate structure, not semantic correctness.
+- Raw results and readable comparisons:
+  `artifacts/translation-direct-probe-indexed-2026-10-05.json` and `.txt`.
+  Reproduce with `references/translation-direct-probe.mjs`.
+- 118 regression tests pass; syntax and release checks pass. These cover batch
+  packing, contextual budgets, prefetch reuse, ID rejection, rotation, redacted
+  quota metadata and client/event propagation. This test did not run TTS or
+  establish new five-minute playback/resource measurements.
+
 - Echoly subtitle-first baseline audited and mapped.
 - Caption parse/regroup/dedupe deterministic tests pass.
 - Translation batch size is 10; order and output count are validated.

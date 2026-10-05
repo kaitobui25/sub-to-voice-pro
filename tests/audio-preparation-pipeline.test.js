@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-function setup(adaptiveStartup = false, preparation = {}, synthesisDurations = {}, captionStarts = [0, 1, 2, 3, 4]) {
+function setup(adaptiveStartup = false, preparation = {}, synthesisDurations = {}, captionStarts = [0, 1, 2, 3, 4], settings = {}) {
   let clockMs = 0;
   const listeners = new Map();
   const video = {
@@ -20,6 +20,7 @@ function setup(adaptiveStartup = false, preparation = {}, synthesisDurations = {
   const scheduled = [];
   const synthesized = [];
   const speakerBatches = [];
+  const translationCalls = [];
   let handler;
   let finishFourth;
   const fourthAudio = new Promise((resolve) => { finishFourth = resolve; });
@@ -63,6 +64,7 @@ function setup(adaptiveStartup = false, preparation = {}, synthesisDurations = {
     setTimeout(callback) { timers.push(callback); },
     AbortController, URL, Set,
     SubToVoiceCaptionCore: require("../lib/caption-core.js"),
+    SubToVoiceTranslationCore: require("../lib/translation-core.js"),
     SubToVoicePlaybackClock: require("../lib/playback-clock.js"),
     SubToVoicePlaybackSyncController: require("../lib/playback-sync-controller.js"),
     SubToVoiceAudioPreparation: require("../lib/audio-preparation.js"),
@@ -70,9 +72,14 @@ function setup(adaptiveStartup = false, preparation = {}, synthesisDurations = {
       async getRuntimeSettings() { return {
         sourceLanguage: "en", targetLanguage: "vi", multiVoice: true,
         speakerChunkSize: 2, multiVoiceLookaheadSeconds: 60, ttsConcurrency: 1,
-        audioPreparation: { adaptiveStartup, groupedResume: true, startupSeconds: 4.5, resumeSeconds: 1.5, maxBufferSeconds: 4.5, ...preparation }
+        audioPreparation: { adaptiveStartup, groupedResume: true, startupSeconds: 4.5, resumeSeconds: 1.5, maxBufferSeconds: 4.5, ...preparation },
+        ...settings
       }; },
-      async translateBatch({ lines }) { return lines; },
+      async translateBatch({ lines, onAttempt }) {
+        translationCalls.push([...lines]);
+        onAttempt?.({ model: "test", batchStart: 0, lineCount: lines.length, outcome: "success" });
+        return lines;
+      },
       async labelSpeakers({ lines }) {
         speakerBatches.push(lines.map((line) => line.id));
         return lines.map(() => "S1");
@@ -112,13 +119,32 @@ function setup(adaptiveStartup = false, preparation = {}, synthesisDurations = {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../content.js"), "utf8"), context);
   const send = (type) => new Promise((resolve) => handler({ type }, {}, resolve));
 
-  return { video, listeners, timers, finishFourth, finishFifth, send, synthesized, scheduled,
+  return { video, listeners, timers, finishFourth, finishFifth, send, synthesized, scheduled, translationCalls,
     advanceClock: (ms) => { clockMs += ms; } };
 }
 
 async function flush() {
   for (let index = 0; index < 12; index += 1) await new Promise(setImmediate);
 }
+
+test("Gemini prefetch translates beyond the audio window once and exports attempt diagnostics", async () => {
+  const state = setup(false, {}, {}, [0, 1, 60, 61, 62], {
+    translationProvider: "gemini", translationBatchLimits: { maxLines: 100, maxChars: 16000 }
+  });
+  assert.equal((await state.send("CONTENT_START")).ok, true);
+  assert.deepEqual(state.translationCalls.map(lines => lines.length), [5]);
+  state.timers.shift()();
+  await flush();
+  assert.equal(state.translationCalls.length, 1, "rolling rendering reuses prefetched translations");
+  const log = (await state.send("CONTENT_GET_DIAGNOSTIC_LOG")).log;
+  const attempt = log.events.find(event => event.type === "translation_attempt");
+  assert.equal(attempt.firstSentenceId, 1);
+  assert.equal(attempt.lastSentenceId, 5);
+  assert.ok(log.resources.queuedTtsCount <= 8);
+  await state.send("CONTENT_STOP");
+  state.finishFourth();
+  state.finishFifth();
+});
 
 test("a finished future TTS cue does not jump ahead of cached audio near the playhead", async () => {
   const { video, timers, scheduled, send } = setup(false, {}, {}, [0, 1, 60, 61, 62]);

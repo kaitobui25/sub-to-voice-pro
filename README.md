@@ -28,7 +28,7 @@ Reload extension, mở video YouTube có phụ đề và bật công tắc trong
 The MVP follows the locked Echoly baseline in docs/ECHOLY_BASELINE.md:
 
 - YouTube captions -> JSON3 -> sentence regroup/dedupe
-- translation batches of at most 10 lines
+- translation batches: Gemini packs up to the configured line/character budget; Google/Microsoft retain batches of at most 10 lines
 - first wave of 2 forward sentences
 - complete-file TTS with provider-configured render concurrency
 - decodeAudioData() -> AudioBuffer
@@ -38,6 +38,15 @@ The MVP follows the locked Echoly baseline in docs/ECHOLY_BASELINE.md:
 
 Translation and TTS are provider-neutral at the core boundary. The popup defaults to Google Translate with Microsoft fallback, and VieNeu TTS. Gemini and Auto modes are also available; Auto tries Google, Microsoft, then Gemini for translation, and VieNeu then Gemini for TTS. Provider orders, models, endpoints, voices, and concurrency come from config.yaml.
 Gemini translation rotates through configured models after successful batches. On HTTP 429 or transient server failures (500/502/503/504), the adapter records a per-model cooldown and continues with the next configured model; later requests skip models still cooling down. Retry-After/provider detail is honored when present.
+The Gemini pool contains the three tested models: 3.5 Flash-Lite, 3.1 Flash-Lite,
+and 2.5 Flash. Translation prefetch is independent of the TTS queue. Limits are
+configured under `translation`: 100 lines, 16,000 prompt characters, eight prior
+context lines, 16,384 output tokens, and 60 seconds per model attempt. These
+budgets do not guarantee the project's RPM/TPM quota will never be exceeded.
+Gemini returns sentence IDs; wrong counts, duplicate/reordered IDs, blank text,
+or malformed output trigger another model attempt. Diagnostic JSON includes
+`translation_attempt` events with model, sentence range, response status,
+duration, usage and redacted error details.
 TTS models are tried in config order; the adapter falls back to the next configured TTS model only when the current model returns HTTP 429.
 After a 429, the adapter remembers that model's cooldown from Retry-After (or the provider error message) and skips it until the cooldown expires, preventing repeated rate-limit calls.
 

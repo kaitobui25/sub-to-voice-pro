@@ -582,6 +582,19 @@
 
   async function translateBatch(current, startIdx, endIdx) {
     if (current !== session || current.stopFlag || startIdx >= endIdx) return;
+    while (startIdx < endIdx && current.translations[startIdx]) startIdx++;
+    if (startIdx >= endIdx) return;
+    if (current.settings.translationBatchLimits) {
+      endIdx = Math.max(endIdx, globalThis.SubToVoiceTranslationCore.batchEnd(
+        current.sentences, startIdx, current.settings.translationBatchLimits, (sentence) => sentence.text));
+    }
+    const contextSize = current.settings.translationContextSize ?? 8;
+    const context = current.sentences.slice(Math.max(0, startIdx - contextSize), startIdx)
+      .map((sentence) => sentence.text);
+    const onAttempt = (attempt) => recordPlaybackEvent(current, "translation_attempt", {
+      ...attempt, firstSentenceId: startIdx + attempt.batchStart + 1,
+      lastSentenceId: startIdx + attempt.batchStart + attempt.lineCount
+    });
     for (let index = startIdx; index < endIdx; index += 1) {
       const trace = traceFor(current, index);
       if (trace.translationStart == null) trace.translationStart = traceTime(trace);
@@ -594,10 +607,12 @@
         lines: slice.map((sentence) => sentence.text),
         sourceLanguage: current.settings.sourceLanguage || "auto",
         targetLanguage: current.settings.targetLanguage || "vi",
+        context, onAttempt,
         signal
       });
     } catch (error) {
       if (!signal.aborted) {
+        (error.attempts || []).forEach(onAttempt);
         for (let index = startIdx; index < endIdx; index += 1) {
           traceFor(current, index).translationError = error?.message || String(error);
         }

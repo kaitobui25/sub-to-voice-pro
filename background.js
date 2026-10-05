@@ -71,6 +71,8 @@ function publicRuntimeSettings(config, selections) {
     voiceVolume: config.audio?.voiceVolume ?? 100,
     ttsProvider: selections.tts,
     translationProvider: selections.translation,
+    translationBatchLimits: SubToVoiceProviderRuntime.translationBatchLimits(config.translation, selections.translation),
+    translationContextSize: config.translation?.contextSize ?? 8,
     multiVoice: selections.voiceMode === "multi" && Array.isArray(profile?.speakerVoices) && profile.speakerVoices.length > 1,
     speakerVoiceCount: Array.isArray(profile?.speakerVoices) ? profile.speakerVoices.length : 0,
     renderBatchSize: config.speakerDetection?.renderBatchSize ?? config.speakerDetection?.chunkSize ?? 8,
@@ -87,17 +89,19 @@ function publicRuntimeSettings(config, selections) {
   };
 }
 
-async function translateWithConfiguredProvider(message, signal) {
+async function translateWithConfiguredProvider(message, signal, attempts = []) {
   const config = await loadRuntimeConfig();
   const translation = config.translation || {};
   const selection = (await providerSelections(config)).translation;
   const manager = SubToVoiceProviderRuntime.createTranslationManager(
-    SubToVoiceProviderRuntime.translationConfig(translation, selection)
+    SubToVoiceProviderRuntime.translationConfig(translation, selection),
+    { onAttempt: (attempt) => attempts.push({ ...attempt, requestId: message.requestId }) }
   );
   return manager.translateBatch({
     lines: message.lines,
     sourceLanguage: message.sourceLanguage || translation.sourceLanguage || "auto",
     targetLanguage: message.targetLanguage || translation.targetLanguage || "vi",
+    context: message.context || [],
     signal
   });
 }
@@ -308,9 +312,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const requestId = String(message.requestId || "");
     const controller = new AbortController();
     if (requestId) providerRequestControllers.set(requestId, controller);
-    translateWithConfiguredProvider(message, controller.signal).then(
-      (lines) => sendResponse({ ok: true, lines }),
-      (error) => sendResponse({ ok: false, error: error?.message || String(error) })
+    const attempts = [];
+    translateWithConfiguredProvider(message, controller.signal, attempts).then(
+      (lines) => sendResponse({ ok: true, lines, attempts }),
+      (error) => sendResponse({ ok: false, error: error?.message || String(error), attempts })
     ).finally(() => {
       if (requestId) providerRequestControllers.delete(requestId);
     });

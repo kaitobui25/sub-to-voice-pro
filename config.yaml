@@ -18,12 +18,14 @@ translation:
   # continues with the next configured text-generation model.
   models:
     - gemini-3.5-flash-lite
-    - gemini-3.8-flash
-    - gemini-3.7-flash
     - gemini-3.1-flash-lite
-    - gemini-flash-latest
-    - gemini-3-flash-preview
     - gemini-2.5-flash
+  # Gemini batches are independent of the bounded audio synthesis queue.
+  max_batch_lines: 100
+  max_prompt_chars: 16000
+  context_size: 8
+  max_output_tokens: 16384
+  model_timeout_ms: 60000
   source_language: auto
   target_language: vi
   fallback_providers:

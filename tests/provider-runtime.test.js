@@ -74,6 +74,31 @@ test("provider runtime rejects unknown configured providers", () => {
   );
 });
 
+test("translation rejects duplicate IDs even with the right count and retries the next model", async () => {
+  const originalFetch = globalThis.fetch;
+  const attempts = [];
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    const lines = calls === 1 ? [{ id: 1, text: "a" }, { id: 1, text: "b" }]
+      : [{ id: 1, text: "a" }, { id: 2, text: "b" }];
+    return { ok: true, status: 200, async json() { return {
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ lines }) }] } }]
+    }; } };
+  };
+  try {
+    const manager = runtime.createTranslationManager({ provider: "gemini", apiKey: "test-key",
+      baseUrl: "https://ids.test/v1beta", models: ["one", "two"], batchLimits: { maxLines: 100, maxChars: 16000 } },
+      { onAttempt: row => attempts.push(row) });
+    assert.deepEqual(await manager.translateBatch({ lines: ["a", "b"], targetLanguage: "vi" }), ["a", "b"]);
+    assert.equal(calls, 2);
+    assert.equal(attempts[0].outputLineCount, 2);
+    assert.equal(attempts[0].errorType, "invalid_output");
+    assert.match(attempts[0].error, /ID\/order mismatch/);
+    assert.equal(attempts[1].outcome, "success");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("provider selection uses configured orders and defaults", () => {
   const config = {
     translation: { defaultSelection: "google" },
